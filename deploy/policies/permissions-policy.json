@@ -18,7 +18,8 @@
         "arn:aws:s3:::claude-news-analyzer/responses/*",
         "arn:aws:s3:::claude-news-analyzer/daily/*",
         "arn:aws:s3:::claude-news-analyzer/weekly/*",
-        "arn:aws:s3:::claude-news-analyzer/monthly/*"
+        "arn:aws:s3:::claude-news-analyzer/monthly/*",
+        "arn:aws:s3:::claude-news-analyzer/quarterly/*"
       ]
     },
     {

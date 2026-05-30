@@ -34,17 +34,18 @@ aws s3 ls "s3://${S3_BUCKET_NAME}/"
 
 ## 2. config とプロンプトを S3 にアップロード
 
-Lambda は `config/config.json` の `prompt_paths` を参照し、`analysis_type` ごとに日次・週次・月次プロンプトを切り替えます。
+Lambda は `config/config.json` の `prompt_paths` を参照し、`analysis_type` ごとに日次・週次・月次・四半期プロンプトを切り替えます。
 
 ```bash
 aws s3 cp config/config.json "s3://${S3_BUCKET_NAME}/config/config.json"
 aws s3 cp config/news_analysis_prompt.txt "s3://${S3_BUCKET_NAME}/config/news_analysis_prompt.txt"
 aws s3 cp config/weekly_news_analysis_prompt.txt "s3://${S3_BUCKET_NAME}/config/weekly_news_analysis_prompt.txt"
 aws s3 cp config/monthly_news_analysis_prompt.txt "s3://${S3_BUCKET_NAME}/config/monthly_news_analysis_prompt.txt"
+aws s3 cp config/quarterly_news_analysis_prompt.txt "s3://${S3_BUCKET_NAME}/config/quarterly_news_analysis_prompt.txt"
 aws s3 ls "s3://${S3_BUCKET_NAME}/config/"
 ```
 
-現在の `config/config.json` では、`email_notification.enabled_analysis_types` が `daily`, `weekly`, `monthly` を含みます。SES や Secrets Manager の準備が未完了の環境では、通知を無効化するか、通知対象を絞ってからアップロードしてください。
+現在の `config/config.json` では、`email_notification.enabled_analysis_types` が `daily`, `weekly`, `monthly`, `quarterly` を含みます。SES や Secrets Manager の準備が未完了の環境では、通知を無効化するか、通知対象を絞ってからアップロードしてください。
 
 ## 3. Lambda 実行ロール作成
 
@@ -53,7 +54,7 @@ aws s3 ls "s3://${S3_BUCKET_NAME}/config/"
 `deploy/policies/permissions-policy.json` には以下が含まれます。
 
 - `config/*` の読み取り
-- `responses/*`, `daily/*`, `weekly/*`, `monthly/*` の読み書き
+- `responses/*`, `daily/*`, `weekly/*`, `monthly/*`, `quarterly/*` の読み書き
 - CloudWatch Logs 書き込み
 - Bedrock `InvokeModel`
 - SES `SendEmail`
@@ -107,7 +108,8 @@ export LAMBDA_ROLE_ARN="$(aws iam get-role \
       "Resource": [
         "arn:aws:s3:::claude-news-analyzer/daily/*",
         "arn:aws:s3:::claude-news-analyzer/weekly/*",
-        "arn:aws:s3:::claude-news-analyzer/monthly/*"
+        "arn:aws:s3:::claude-news-analyzer/monthly/*",
+        "arn:aws:s3:::claude-news-analyzer/quarterly/*"
       ]
     }
   ]
@@ -198,7 +200,7 @@ cat output-daily.json
 aws logs tail "/aws/lambda/${LAMBDA_FUNCTION_NAME}" --follow --region "${AWS_REGION}"
 ```
 
-週次・月次は前段レポートが S3 に存在する状態で実行します。
+週次・月次・四半期は前段レポートが S3 に存在する状態で実行します。
 
 ```bash
 AWS_MAX_ATTEMPTS=1 aws lambda invoke \
@@ -218,6 +220,15 @@ AWS_MAX_ATTEMPTS=1 aws lambda invoke \
   --cli-binary-format raw-in-base64-out \
   --payload '{"analysis_type":"monthly"}' \
   output-monthly.json
+
+AWS_MAX_ATTEMPTS=1 aws lambda invoke \
+  --function-name "${LAMBDA_FUNCTION_NAME}" \
+  --region "${AWS_REGION}" \
+  --cli-read-timeout 900 \
+  --cli-connect-timeout 10 \
+  --cli-binary-format raw-in-base64-out \
+  --payload '{"analysis_type":"quarterly"}' \
+  output-quarterly.json
 ```
 
 期待されるレスポンス:
@@ -231,7 +242,9 @@ AWS_MAX_ATTEMPTS=1 aws lambda invoke \
 
 ## 9. EventBridge スケジュール
 
-同じ Lambda 関数に対して、日次・週次・月次の 3 つの EventBridge ルールを作成します。各ターゲットの `Input` で `analysis_type` を渡します。
+同じ Lambda 関数に対して、日次・週次・月次・四半期の 4 つの EventBridge ルールを作成します。各ターゲットの `Input` で `analysis_type` を渡します。
+
+`put-targets` は shorthand ではなく file JSON 方式で指定します。シェルの引用、JSON の二重エスケープ、AWS CLI shorthand parser の解釈差による失敗を避けるためです。
 
 ```bash
 export LAMBDA_ARN="$(aws lambda get-function \
@@ -246,9 +259,19 @@ aws events put-rule \
   --state ENABLED \
   --region "${AWS_REGION}"
 
+cat > /tmp/claude-news-analyzer-daily-target.json <<EOF
+[
+  {
+    "Id": "1",
+    "Arn": "${LAMBDA_ARN}",
+    "Input": "{\"analysis_type\":\"daily\"}"
+  }
+]
+EOF
+
 aws events put-targets \
   --rule claude-news-analyzer-daily \
-  --targets "Id=1,Arn=${LAMBDA_ARN},Input={\"analysis_type\":\"daily\"}" \
+  --targets file:///tmp/claude-news-analyzer-daily-target.json \
   --region "${AWS_REGION}"
 
 aws lambda add-permission \
@@ -260,7 +283,7 @@ aws lambda add-permission \
   --region "${AWS_REGION}"
 ```
 
-週次と月次:
+週次、月次、四半期:
 
 ```bash
 aws events put-rule \
@@ -269,9 +292,19 @@ aws events put-rule \
   --state ENABLED \
   --region "${AWS_REGION}"
 
+cat > /tmp/claude-news-analyzer-weekly-target.json <<EOF
+[
+  {
+    "Id": "1",
+    "Arn": "${LAMBDA_ARN}",
+    "Input": "{\"analysis_type\":\"weekly\"}"
+  }
+]
+EOF
+
 aws events put-targets \
   --rule claude-news-analyzer-weekly \
-  --targets "Id=1,Arn=${LAMBDA_ARN},Input={\"analysis_type\":\"weekly\"}" \
+  --targets file:///tmp/claude-news-analyzer-weekly-target.json \
   --region "${AWS_REGION}"
 
 aws lambda add-permission \
@@ -288,9 +321,19 @@ aws events put-rule \
   --state ENABLED \
   --region "${AWS_REGION}"
 
+cat > /tmp/claude-news-analyzer-monthly-target.json <<EOF
+[
+  {
+    "Id": "1",
+    "Arn": "${LAMBDA_ARN}",
+    "Input": "{\"analysis_type\":\"monthly\"}"
+  }
+]
+EOF
+
 aws events put-targets \
   --rule claude-news-analyzer-monthly \
-  --targets "Id=1,Arn=${LAMBDA_ARN},Input={\"analysis_type\":\"monthly\"}" \
+  --targets file:///tmp/claude-news-analyzer-monthly-target.json \
   --region "${AWS_REGION}"
 
 aws lambda add-permission \
@@ -299,6 +342,35 @@ aws lambda add-permission \
   --action 'lambda:InvokeFunction' \
   --principal events.amazonaws.com \
   --source-arn "arn:aws:events:${AWS_REGION}:${ACCOUNT_ID}:rule/claude-news-analyzer-monthly" \
+  --region "${AWS_REGION}"
+
+aws events put-rule \
+  --name claude-news-analyzer-quarterly \
+  --schedule-expression 'cron(0 3 1 1,4,7,10 ? *)' \
+  --state ENABLED \
+  --region "${AWS_REGION}"
+
+cat > /tmp/claude-news-analyzer-quarterly-target.json <<EOF
+[
+  {
+    "Id": "1",
+    "Arn": "${LAMBDA_ARN}",
+    "Input": "{\"analysis_type\":\"quarterly\"}"
+  }
+]
+EOF
+
+aws events put-targets \
+  --rule claude-news-analyzer-quarterly \
+  --targets file:///tmp/claude-news-analyzer-quarterly-target.json \
+  --region "${AWS_REGION}"
+
+aws lambda add-permission \
+  --function-name "${LAMBDA_FUNCTION_NAME}" \
+  --statement-id claude-news-analyzer-quarterly-event \
+  --action 'lambda:InvokeFunction' \
+  --principal events.amazonaws.com \
+  --source-arn "arn:aws:events:${AWS_REGION}:${ACCOUNT_ID}:rule/claude-news-analyzer-quarterly" \
   --region "${AWS_REGION}"
 ```
 
@@ -319,12 +391,13 @@ TODAY="$(TZ=Asia/Tokyo date +%Y-%m-%d)"
 aws s3 ls "s3://${S3_BUCKET_NAME}/daily/"
 aws s3 ls "s3://${S3_BUCKET_NAME}/weekly/"
 aws s3 ls "s3://${S3_BUCKET_NAME}/monthly/"
+aws s3 ls "s3://${S3_BUCKET_NAME}/quarterly/"
 aws s3 cp "s3://${S3_BUCKET_NAME}/daily/${TODAY}.md" ./
 aws s3 cp "s3://${S3_BUCKET_NAME}/daily/${TODAY}.html" ./
 aws s3 cp "s3://${S3_BUCKET_NAME}/daily/${TODAY}_articles.txt" ./
 ```
 
-分析結果は `.md` と `.html` の両方を保存します。週次・月次の入力には `.md` を優先して使い、移行期間の互換用として過去の `.txt` も参照します。メール通知の分析結果リンクは閲覧用の `.html` を指します。日次の収集記事一覧は `_articles.txt` のままです。
+分析結果は `.md` と `.html` の両方を保存します。週次・月次・四半期の入力には `.md` を優先して使い、移行期間の互換用として過去の `.txt` も参照します。四半期分析は `quarterly/FY2026-Q1.md` と `quarterly/FY2026-Q1.html` のように保存します。メール通知の分析結果リンクは閲覧用の `.html` を指します。日次の収集記事一覧は `_articles.txt` のままです。
 
 メール通知:
 
@@ -366,7 +439,7 @@ aws iam put-role-policy \
   --policy-document file:///tmp/claude-news-analyzer-permissions-policy.json
 ```
 
-必要なプレフィックスは `config/*`, `daily/*`, `weekly/*`, `monthly/*`, 旧互換の `responses/*` です。
+必要なプレフィックスは `config/*`, `daily/*`, `weekly/*`, `monthly/*`, `quarterly/*`, 旧互換の `responses/*` です。
 
 ### Secrets Manager アクセス拒否
 
@@ -392,6 +465,16 @@ aws s3 ls "s3://${S3_BUCKET_NAME}/responses/"
 ```bash
 aws s3 ls "s3://${S3_BUCKET_NAME}/weekly/"
 ```
+
+### 四半期分析の入力が見つからない、または不足する
+
+四半期分析は直前四半期の3か月分の月次ファイルを `monthly/` から読み込みます。新しい `monthly/YYYY-MM.md` を優先し、互換用として `monthly/YYYY-MM.txt` も読み取ります。同じ月で `.md` と `.txt` が両方ある場合は `.md` だけを使います。
+
+```bash
+aws s3 ls "s3://${S3_BUCKET_NAME}/monthly/"
+```
+
+入力が0件の場合は失敗します。1から2件だけ存在する場合は CloudWatch Logs に不足警告を出し、利用可能な月次レポートだけで分析します。
 
 ### CreateFunction で Function already exist になる
 
@@ -430,10 +513,12 @@ aws lambda publish-layer-version \
 aws events disable-rule --name claude-news-analyzer-daily --region "${AWS_REGION}"
 aws events disable-rule --name claude-news-analyzer-weekly --region "${AWS_REGION}"
 aws events disable-rule --name claude-news-analyzer-monthly --region "${AWS_REGION}"
+aws events disable-rule --name claude-news-analyzer-quarterly --region "${AWS_REGION}"
 
 aws s3 sync "s3://${S3_BUCKET_NAME}/daily/" ./responses/daily/
 aws s3 sync "s3://${S3_BUCKET_NAME}/weekly/" ./responses/weekly/
 aws s3 sync "s3://${S3_BUCKET_NAME}/monthly/" ./responses/monthly/
+aws s3 sync "s3://${S3_BUCKET_NAME}/quarterly/" ./responses/quarterly/
 aws s3 sync "s3://${S3_BUCKET_NAME}/responses/" ./responses/legacy/
 ```
 
@@ -446,7 +531,7 @@ python lambda_handler.py
 
 ## コスト目安
 
-日次 30 回、週次 4-5 回、月次 1 回の実行では、Lambda/S3/CloudWatch Logs は小額に収まる想定です。Bedrock の料金はモデル、入力トークン、出力トークン量に依存するため別途確認してください。
+日次 30 回、週次 4-5 回、月次 1 回、四半期 1 回の実行では、Lambda/S3/CloudWatch Logs は小額に収まる想定です。Bedrock の料金はモデル、入力トークン、出力トークン量に依存するため別途確認してください。
 
 ## 参考
 

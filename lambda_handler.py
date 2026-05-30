@@ -66,7 +66,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         logger.info(f"設定ファイル読み込み完了: プロバイダー={provider}, モデル={config.get(model_key)}")
 
         analysis_type = _get_analysis_type(event)
-        if analysis_type not in {"daily", "weekly", "monthly"}:
+        if analysis_type not in {"daily", "weekly", "monthly", "quarterly"}:
             error_msg = f"未サポートの分析種別です: {analysis_type}"
             logger.error(error_msg)
             return {

@@ -373,6 +373,32 @@ class LLMFetcher:
         previous_month_start = previous_month_end.replace(day=1)
         return previous_month_start, previous_month_end
 
+    def _get_previous_quarter_range(self) -> tuple:
+        """4月始まりの会計年度で直前四半期のラベルと日付範囲を取得する"""
+        today = self._get_now().date()
+        current_quarter_start_month = ((today.month - 4) % 12) // 3 * 3 + 4
+        current_quarter_year = today.year
+        if current_quarter_start_month > 12:
+            current_quarter_start_month -= 12
+
+        current_quarter_start = today.replace(
+            year=current_quarter_year,
+            month=current_quarter_start_month,
+            day=1
+        )
+        period_end = current_quarter_start - timedelta(days=1)
+        period_start_month = period_end.month - 2
+        period_start_year = period_end.year
+        if period_start_month <= 0:
+            period_start_month += 12
+            period_start_year -= 1
+        period_start = period_end.replace(year=period_start_year, month=period_start_month, day=1)
+
+        fiscal_year = period_start.year if period_start.month >= 4 else period_start.year - 1
+        quarter = ((period_start.month - 4) % 12) // 3 + 1
+        quarter_label = f"FY{fiscal_year}-Q{quarter}"
+        return quarter_label, period_start, period_end
+
     def _load_text_if_exists(self, key: str) -> Optional[str]:
         """存在するS3テキストを読み込む。存在しなければNoneを返す"""
         try:
@@ -446,6 +472,48 @@ class LLMFetcher:
             reports.append(f"## {Path(key).stem}\n\n{content}")
 
         self.logger.info(f"月次分析の入力週次レポート数: {len(reports)}")
+        return ("\n\n" + "=" * 80 + "\n\n").join(reports)
+
+    def _load_monthly_analyses_for_quarter(self, period_start, period_end) -> str:
+        """四半期に含まれる3か月分の月次分析をS3から読み込む"""
+        if self.s3_handler is None:
+            raise ValueError("四半期分析にはS3Handlerが必要です")
+
+        monthly_prefix = self._get_output_prefix("monthly")
+        reports = []
+        current_month = period_start.replace(day=1)
+
+        while current_month <= period_end:
+            target_month = current_month.strftime("%Y-%m")
+            candidate_keys = [
+                f"{monthly_prefix}/{target_month}.md",
+                f"{monthly_prefix}/{target_month}.txt",
+            ]
+
+            for key in candidate_keys:
+                content = self._load_text_if_exists(key)
+                if content:
+                    self.logger.info(f"月次分析を読み込みました: month={target_month}, key={key}")
+                    reports.append(f"## {target_month}\n\n{content}")
+                    break
+            else:
+                self.logger.warning(f"月次分析が見つかりません: month={target_month}")
+
+            if current_month.month == 12:
+                current_month = current_month.replace(year=current_month.year + 1, month=1)
+            else:
+                current_month = current_month.replace(month=current_month.month + 1)
+
+        if not reports:
+            raise ValueError(
+                f"四半期分析の入力となる月次分析が見つかりません: "
+                f"{period_start.strftime('%Y-%m-%d')} - {period_end.strftime('%Y-%m-%d')}"
+            )
+
+        if len(reports) < 3:
+            self.logger.warning(f"四半期分析の入力月次レポートが不足しています: {len(reports)}/3")
+
+        self.logger.info(f"四半期分析の入力月次レポート数: {len(reports)}")
         return ("\n\n" + "=" * 80 + "\n\n").join(reports)
 
     def _create_news_analysis_prompt(self, formatted_articles: str) -> str:
@@ -694,6 +762,30 @@ class LLMFetcher:
             "analysis": [analysis_key]
         }
 
+    def run_quarterly(self) -> Dict[str, List[str]]:
+        """
+        四半期ニュース分析を実行
+        """
+        if self.s3_handler is None:
+            raise ValueError("四半期分析にはS3Handlerが必要です")
+
+        quarter_label, period_start, period_end = self._get_previous_quarter_range()
+        self.logger.info(f"四半期分析対象期間: {quarter_label} {period_start} - {period_end}")
+
+        monthly_analyses = self._load_monthly_analyses_for_quarter(period_start, period_end)
+        prompt = self._create_periodic_analysis_prompt(
+            monthly_analyses=monthly_analyses,
+            quarter_label=quarter_label,
+            period_start=period_start.strftime("%Y-%m-%d"),
+            period_end=period_end.strftime("%Y-%m-%d")
+        )
+        response = self.fetch_response(prompt)
+        analysis_key = self.save_periodic_response(response, "quarterly", quarter_label, "四半期ニュース分析レポート")
+        return {
+            "articles": [],
+            "analysis": [analysis_key]
+        }
+
     def _send_email_notification(
         self,
         analysis_type: str,
@@ -742,7 +834,7 @@ class LLMFetcher:
         メイン処理を実行
 
         Args:
-            analysis_type: 分析種別（daily, weekly, monthly）
+            analysis_type: 分析種別（daily, weekly, monthly, quarterly）
 
         Returns:
             成功時True、失敗時False
@@ -757,6 +849,8 @@ class LLMFetcher:
                 artifacts = self.run_weekly()
             elif analysis_type == "monthly":
                 artifacts = self.run_monthly()
+            elif analysis_type == "quarterly":
+                artifacts = self.run_quarterly()
             else:
                 raise ValueError(f"未サポートの分析種別です: {analysis_type}")
 

@@ -60,7 +60,7 @@ class EmailNotifier:
         分析完了通知を送信する
 
         Args:
-            analysis_type: 分析種別（daily, weekly, monthly）
+            analysis_type: 分析種別（daily, weekly, monthly, quarterly）
             artifacts: 通知対象のS3キー一覧
             executed_at: 実行日時
         """
@@ -268,7 +268,8 @@ class EmailNotifier:
         labels = {
             "daily": "日次ニュース分析",
             "weekly": "週次ニュース分析",
-            "monthly": "月次ニュース分析"
+            "monthly": "月次ニュース分析",
+            "quarterly": "四半期ニュース分析"
         }
         return labels.get(analysis_type, analysis_type)
 

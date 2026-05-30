@@ -45,6 +45,19 @@ class AnalysisPromptTests(unittest.TestCase):
         self.assertIn("複数日の観測ポイントを横断してテーマ化", prompt)
         self.assertIn("日次レポートに書かれていない事実は補完して断定しない", prompt)
 
+    def test_quarterly_prompt_has_required_placeholders(self):
+        prompt = self._read_prompt("quarterly_news_analysis_prompt.txt")
+
+        for placeholder in [
+            "{quarter_label}",
+            "{period_start}",
+            "{period_end}",
+            "{monthly_analyses}",
+        ]:
+            self.assertIn(placeholder, prompt)
+        self.assertIn("四半期総括", prompt)
+        self.assertIn("月次レポートだけを根拠", prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

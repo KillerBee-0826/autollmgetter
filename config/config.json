@@ -17,17 +17,19 @@
   "prompt_paths": {
     "daily": "config/news_analysis_prompt.txt",
     "weekly": "config/weekly_news_analysis_prompt.txt",
-    "monthly": "config/monthly_news_analysis_prompt.txt"
+    "monthly": "config/monthly_news_analysis_prompt.txt",
+    "quarterly": "config/quarterly_news_analysis_prompt.txt"
   },
   "output_prefixes": {
     "daily": "daily",
     "weekly": "weekly",
-    "monthly": "monthly"
+    "monthly": "monthly",
+    "quarterly": "quarterly"
   },
 
   "email_notification": {
     "enabled": true,
-    "enabled_analysis_types": ["daily", "weekly", "monthly"],
+    "enabled_analysis_types": ["daily", "weekly", "monthly", "quarterly"],
     "ses_region": "ap-northeast-1",
     "sender": "ryusyukuri@gmail.com",
     "recipients": ["shiny.1k2no-meteor@ezweb.ne.jp","ryu_syukuri@hotmail.co.jp"],

@@ -37,6 +37,48 @@ import lambda_handler
 
 
 class LambdaHandlerErrorResponseTests(unittest.TestCase):
+    def test_quarterly_analysis_type_is_allowed(self):
+        logger = Mock()
+        s3_handler = Mock()
+        s3_handler.load_json.return_value = {
+            "llm_provider": "bedrock",
+            "bedrock_model": "model",
+            "prompt_paths": {
+                "quarterly": "config/quarterly_news_analysis_prompt.txt",
+            },
+        }
+        s3_handler.load_text.return_value = "quarterly prompt"
+        fetcher = Mock()
+        fetcher.run.return_value = True
+
+        with patch.dict(lambda_handler.os.environ, {"S3_BUCKET_NAME": "bucket"}, clear=True):
+            with patch.object(lambda_handler, "setup_cloudwatch_logger", return_value=logger):
+                with patch.object(lambda_handler, "S3Handler", return_value=s3_handler):
+                    with patch.object(lambda_handler, "LLMFetcher", return_value=fetcher):
+                        response = lambda_handler.lambda_handler({"analysis_type": "quarterly"}, Mock())
+
+        self.assertEqual(response["statusCode"], 200)
+        s3_handler.load_text.assert_called_once_with("config/quarterly_news_analysis_prompt.txt")
+        fetcher.run.assert_called_once_with(analysis_type="quarterly")
+
+    def test_unsupported_analysis_type_returns_400(self):
+        logger = Mock()
+        s3_handler = Mock()
+        s3_handler.load_json.return_value = {
+            "llm_provider": "bedrock",
+            "bedrock_model": "model",
+        }
+
+        with patch.dict(lambda_handler.os.environ, {"S3_BUCKET_NAME": "bucket"}, clear=True):
+            with patch.object(lambda_handler, "setup_cloudwatch_logger", return_value=logger):
+                with patch.object(lambda_handler, "S3Handler", return_value=s3_handler):
+                    response = lambda_handler.lambda_handler({"analysis_type": "yearly"}, Mock())
+
+        self.assertEqual(response["statusCode"], 400)
+        body = json.loads(response["body"])
+        self.assertEqual(body["success"], False)
+        self.assertIn("未サポートの分析種別です: yearly", body["error"])
+
     def test_unhandled_exception_response_hides_internal_details_and_logs_traceback(self):
         logger = Mock()
         secret_message = "Sensitive AWS detail: arn:aws:s3:::private-bucket"
