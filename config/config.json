@@ -28,7 +28,8 @@
   },
   "public_html": {
     "enabled": true,
-    "prefix": "public"
+    "prefix": "public",
+    "base_url": ""
   },
 
   "email_notification": {
@@ -37,11 +38,6 @@
     "ses_region": "ap-northeast-1",
     "sender": "ryusyukuri@gmail.com",
     "recipients": ["ryu_syukuri@hotmail.co.jp"],
-    "presigned_url_expires_seconds": 604800,
-    "presigned_url_signer_type": "iam_user_secret",
-    "presigned_url_signing_secret_id": "claude-news-analyzer/s3-presign-user",
-    "presigned_url_signing_secret_region": "ap-northeast-1",
-    "presigned_url_s3_region": "ap-northeast-1",
     "fail_on_send_error": false
   },
 

@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """
 Amazon SESによる分析完了メール通知
-S3上の非公開オブジェクトを期限付きURLで共有する。
+CloudFrontで公開されたHTMLレポートURLを共有する。
 """
 
-import json
 import logging
 from datetime import datetime
 from html import escape
@@ -12,19 +11,12 @@ from typing import Dict, List, Optional
 
 try:
     import boto3
-    from botocore.config import Config
-    from botocore.exceptions import ClientError
 except ImportError:
     boto3 = None
-    Config = None
-    ClientError = Exception
 
 
 class EmailNotifier:
     """Amazon SESを使って分析結果の通知メールを送信するクラス"""
-
-    MAX_PRESIGNED_URL_EXPIRES_SECONDS = 604800
-    SIGNER_TYPE_IAM_USER_SECRET = "iam_user_secret"
 
     def __init__(
         self,
@@ -47,8 +39,6 @@ class EmailNotifier:
         self.s3_handler = s3_handler
         self.logger = logger or logging.getLogger("EmailNotifier")
         self.ses_client = boto3.client("sesv2", region_name=self.config.get("ses_region", "ap-northeast-1"))
-        self.presigned_url_signer_type = self.config.get("presigned_url_signer_type")
-        self._presigned_url_s3_client = None
 
     def send_analysis_notification(
         self,
@@ -69,11 +59,8 @@ class EmailNotifier:
         if not sender or not recipients:
             raise ValueError("email_notification.sender と recipients を設定してください")
 
-        expires_seconds = int(self.config.get("presigned_url_expires_seconds", 86400))
-        self._validate_presigned_url_expires_seconds(expires_seconds)
-
         subject = self._build_subject(analysis_type, executed_at)
-        text_body, html_body = self._build_body(analysis_type, artifacts, executed_at, expires_seconds)
+        text_body, html_body = self._build_body(analysis_type, artifacts, executed_at)
 
         self.logger.info(
             f"SESメール通知を送信します: analysis_type={analysis_type}, recipients={len(recipients)}"
@@ -102,19 +89,16 @@ class EmailNotifier:
         self,
         analysis_type: str,
         artifacts: Dict[str, List[str]],
-        executed_at: datetime,
-        expires_seconds: int
+        executed_at: datetime
     ) -> tuple[str, str]:
         analysis_label = self._analysis_label(analysis_type)
-        expires_hours = expires_seconds / 3600
-        links = self._build_artifact_links(analysis_type, artifacts, expires_seconds)
+        links = self._build_artifact_links(artifacts)
 
         text_lines = [
             f"{analysis_label}が完了しました。",
             "",
             f"分析種別: {analysis_type}",
             f"実行日時: {executed_at.strftime('%Y-%m-%d %H:%M:%S %Z')}",
-            f"URL有効期限: {expires_seconds}秒（約{expires_hours:.1f}時間）",
             "",
             "生成ファイル:"
         ]
@@ -124,8 +108,7 @@ class EmailNotifier:
 
         text_lines.extend([
             "",
-            "このURLを知っている人は有効期限内にファイルへアクセスできます。",
-            "不要な転送や公開場所への貼り付けは避けてください。"
+            "CloudFront経由で公開されたHTMLレポートです。"
         ])
         text_body = "\n".join(text_lines)
 
@@ -146,123 +129,44 @@ class EmailNotifier:
     <dd>{escape(analysis_type)}</dd>
     <dt>実行日時</dt>
     <dd>{escape(executed_at.strftime('%Y-%m-%d %H:%M:%S %Z'))}</dd>
-    <dt>URL有効期限</dt>
-    <dd>{expires_seconds}秒（約{expires_hours:.1f}時間）</dd>
   </dl>
   <p>生成ファイル:</p>
   <ul>
 {link_items}
   </ul>
-  <p>このURLを知っている人は有効期限内にファイルへアクセスできます。不要な転送や公開場所への貼り付けは避けてください。</p>
+  <p>CloudFront経由で公開されたHTMLレポートです。</p>
 </body>
 </html>"""
         return text_body, html_body
 
     def _build_artifact_links(
         self,
-        analysis_type: str,
-        artifacts: Dict[str, List[str]],
-        expires_seconds: int
+        artifacts: Dict[str, List[str]]
     ) -> List[Dict[str, str]]:
         links = []
-        target_labels = ["articles", "analysis"] if analysis_type == "daily" else ["analysis"]
-        for label in target_labels:
-            for key in artifacts.get(label, []):
-                links.append({
-                    "text": self._artifact_link_text(label),
-                    "url": self._generate_presigned_url(key, expires_seconds)
-                })
+        for key in artifacts.get("analysis", []):
+            if not key.endswith(".html"):
+                continue
+
+            links.append({
+                "text": "分析結果を開く",
+                "url": self._build_cloudfront_url(key)
+            })
+
+        links.append({
+            "text": "レポート一覧を開く",
+            "url": self._build_cloudfront_url("index.html")
+        })
         return links
 
-    def _generate_presigned_url(self, key: str, expires_seconds: int) -> str:
-        self._validate_presigned_url_expires_seconds(expires_seconds)
-        try:
-            s3_client = self._get_presigned_url_s3_client()
-            return s3_client.generate_presigned_url(
-                "get_object",
-                Params={"Bucket": self.s3_handler.bucket_name, "Key": key},
-                ExpiresIn=expires_seconds
-            )
-        except ClientError as e:
-            self.logger.error(f"presigned URL生成に失敗しました: key={key}, error={e}")
-            raise
-
-    def _validate_presigned_url_expires_seconds(self, expires_seconds: int) -> None:
-        if expires_seconds > self.MAX_PRESIGNED_URL_EXPIRES_SECONDS:
+    def _build_cloudfront_url(self, key: str) -> str:
+        base_url = self.config.get("public_html", {}).get("base_url", "").strip()
+        if not base_url:
             raise ValueError(
-                "email_notification.presigned_url_expires_seconds は604800秒以下にしてください"
+                "public_html.base_url を設定してください"
             )
 
-    def _get_presigned_url_s3_client(self):
-        if not self.presigned_url_signer_type:
-            return self.s3_handler.s3_client
-
-        if self.presigned_url_signer_type != self.SIGNER_TYPE_IAM_USER_SECRET:
-            raise ValueError(
-                "email_notification.presigned_url_signer_type は "
-                f"{self.SIGNER_TYPE_IAM_USER_SECRET} または未指定にしてください"
-            )
-
-        if self._presigned_url_s3_client is None:
-            self._presigned_url_s3_client = self._create_iam_user_secret_s3_client()
-        return self._presigned_url_s3_client
-
-    def _create_iam_user_secret_s3_client(self):
-        credentials = self._load_presigned_url_signing_credentials()
-        s3_region = self.config.get("presigned_url_s3_region", "ap-northeast-1")
-        return boto3.client(
-            "s3",
-            region_name=s3_region,
-            aws_access_key_id=credentials["aws_access_key_id"],
-            aws_secret_access_key=credentials["aws_secret_access_key"],
-            config=Config(signature_version="s3v4")
-        )
-
-    def _load_presigned_url_signing_credentials(self) -> Dict[str, str]:
-        secret_id = self.config.get(
-            "presigned_url_signing_secret_id",
-            "claude-news-analyzer/s3-presign-user"
-        )
-        secret_region = self.config.get("presigned_url_signing_secret_region", "ap-northeast-1")
-
-        try:
-            secrets_client = boto3.client("secretsmanager", region_name=secret_region)
-            response = secrets_client.get_secret_value(SecretId=secret_id)
-        except ClientError as e:
-            self.logger.error(
-                f"presigned URL署名用シークレットの取得に失敗しました: secret_id={secret_id}, error={e}"
-            )
-            raise
-
-        secret_string = response.get("SecretString")
-        if not secret_string:
-            raise ValueError("presigned URL署名用シークレットにSecretStringがありません")
-
-        try:
-            credentials = json.loads(secret_string)
-        except json.JSONDecodeError as e:
-            raise ValueError("presigned URL署名用シークレットはJSON形式にしてください") from e
-
-        if not isinstance(credentials, dict):
-            raise ValueError("presigned URL署名用シークレットはJSONオブジェクトにしてください")
-
-        required_keys = ["aws_access_key_id", "aws_secret_access_key"]
-        missing_keys = [key for key in required_keys if not credentials.get(key)]
-        if missing_keys:
-            raise ValueError(
-                "presigned URL署名用シークレットに必須キーがありません: "
-                + ", ".join(missing_keys)
-            )
-
-        if "aws_session_token" in credentials:
-            raise ValueError(
-                "presigned URL署名用シークレットにaws_session_tokenを含めないでください"
-            )
-
-        return {
-            "aws_access_key_id": credentials["aws_access_key_id"],
-            "aws_secret_access_key": credentials["aws_secret_access_key"]
-        }
+        return f"{base_url.rstrip('/')}/{key.lstrip('/')}"
 
     def _analysis_label(self, analysis_type: str) -> str:
         labels = {
@@ -272,13 +176,3 @@ class EmailNotifier:
             "quarterly": "四半期ニュース分析"
         }
         return labels.get(analysis_type, analysis_type)
-
-    def _artifact_label(self, label: str) -> str:
-        labels = {
-            "articles": "収集記事一覧",
-            "analysis": "分析結果"
-        }
-        return labels.get(label, label)
-
-    def _artifact_link_text(self, label: str) -> str:
-        return f"{self._artifact_label(label)}を開く"

@@ -982,8 +982,10 @@ class LLMFetcher:
         try:
             from email_notifier import EmailNotifier
 
+            notifier_config = dict(email_config)
+            notifier_config["public_html"] = self.config.get("public_html", {})
             notifier = EmailNotifier(
-                config=email_config,
+                config=notifier_config,
                 s3_handler=self.s3_handler,
                 logger=self.logger
             )

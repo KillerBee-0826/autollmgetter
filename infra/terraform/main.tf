@@ -17,18 +17,16 @@ locals {
   email_config = merge(
     try(local.base_config.email_notification, {}),
     {
-      enabled                             = var.email_notification_enabled
-      sender                              = var.ses_sender_identity != "" ? var.ses_sender_identity : try(local.base_config.email_notification.sender, "")
-      presigned_url_signing_secret_id     = var.presign_secret_name
-      presigned_url_signing_secret_region = var.aws_region
-      presigned_url_s3_region             = var.aws_region
+      enabled = var.email_notification_enabled
+      sender  = var.ses_sender_identity != "" ? var.ses_sender_identity : try(local.base_config.email_notification.sender, "")
     }
   )
   public_html_config = merge(
     try(local.base_config.public_html, {}),
     {
-      enabled = var.public_html_enabled
-      prefix  = trim(var.public_html_prefix, "/")
+      enabled  = var.public_html_enabled
+      prefix   = trim(var.public_html_prefix, "/")
+      base_url = var.public_html_cloudfront_domain_name != "" ? "https://${var.public_html_cloudfront_domain_name}" : try(local.base_config.public_html.base_url, "")
     }
   )
   rendered_config = merge(

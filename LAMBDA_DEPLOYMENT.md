@@ -88,8 +88,8 @@ cp infra/terraform/terraform.tfvars.example infra/terraform/terraform.tfvars
 - Lambda function
 - CloudWatch Logs log group
 - EventBridge rules、targets、Lambda permissions
-- Secrets Manager secret container
-- presigned URL 署名用 IAM user と read-only S3 policy
+- 旧 presigned URL 署名用 Secrets Manager secret container
+- 旧 presigned URL 署名用 IAM user と read-only S3 policy
 - 任意の SESv2 identity
 
 Terraform は `config/config.json` を読み込み、以下の値を変数で上書きした JSON を S3 に保存します。
@@ -98,11 +98,9 @@ Terraform は `config/config.json` を読み込み、以下の値を変数で上
 - `bedrock_region`
 - `email_notification.enabled`
 - `email_notification.sender`
-- `email_notification.presigned_url_signing_secret_id`
-- `email_notification.presigned_url_signing_secret_region`
-- `email_notification.presigned_url_s3_region`
 - `public_html.enabled`
 - `public_html.prefix`
+- `public_html.base_url`
 
 CloudFront distribution は Terraform では作成しません。Free plan で運用するため、AWS Console で CloudFront distribution を手動作成します。作成後に `public_html_cloudfront_distribution_arn` を設定すると、Terraform はその distribution に対して `public/*` の `s3:GetObject` だけを許可する bucket policy を作成します。`public_html_cloudfront_domain_name` は output と手順確認用です。
 
@@ -163,9 +161,9 @@ terraform -chdir=infra/terraform import 'aws_lambda_permission.allow_eventbridge
 
 import 後は必ず `make tf-plan` で差分を確認してください。既存運用値と Terraform 変数が異なる場合、Terraform は変数側へ更新します。
 
-## 5. 署名用 IAM ユーザーと Secret 値
+## 5. 旧 presigned URL 署名用 IAM ユーザーと Secret 値
 
-Terraform は署名用 IAM ユーザーと Secrets Manager Secret コンテナだけを作成します。長期アクセスキーは Terraform で作成しません。`aws_iam_access_key` は秘密値を Terraform state に保存するためです。
+現在のメール通知は CloudFront URL を使うため、この署名用 IAM ユーザーと Secret は新規通知では使いません。既存環境の互換リソースとして Terraform に残しています。長期アクセスキーは Terraform で作成しません。`aws_iam_access_key` は秘密値を Terraform state に保存するためです。
 
 `terraform apply` 後の output で IAM ユーザー名と Secret 名を確認します。
 
@@ -292,9 +290,9 @@ export LAMBDA_ROLE_ARN="$(aws iam get-role \
 
 既存ロールを更新する場合は `create-role` を実行せず、`put-role-policy` だけを実行します。
 
-## 4. 署名用 IAM ユーザーと Secrets Manager
+## 4. Legacy: 署名用 IAM ユーザーと Secrets Manager
 
-7 日間に近い presigned URL が必要な場合、Lambda 実行ロールの一時認証情報ではなく、署名専用 IAM ユーザーの長期アクセスキーを Secrets Manager に保存して署名します。`config/config.json` では以下の設定を使います。
+現在のメール通知は CloudFront URL を使うため、この手順は旧 presigned URL 通知を復旧する場合だけ参照します。7 日間に近い presigned URL が必要な場合、Lambda 実行ロールの一時認証情報ではなく、署名専用 IAM ユーザーの長期アクセスキーを Secrets Manager に保存して署名していました。
 
 ```json
 {
@@ -627,17 +625,15 @@ CLOUDFRONT_DISTRIBUTION_ID="<manual-cloudfront-distribution-id>" make cf-invalid
 
 CloudFront は Free plan で手動作成し、通常の S3 origin + OAC を使います。S3 website endpoint や public bucket policy は使いません。`config/`、Markdown、記事一覧 txt、元の `daily/weekly/monthly/quarterly/` は公開対象外です。公開確認では `https://<cloudfront-domain>/daily/<file>.html` が 200、`https://<cloudfront-domain>/config/config.json` が 403 または 404、S3 直 URL が匿名アクセス不可であることを確認してください。
 
-週次・月次・四半期の入力には `.md` を優先して使い、移行期間の互換用として過去の `.txt` も参照します。四半期分析は `quarterly/FY2026-Q1.md` と `quarterly/FY2026-Q1.html` のように保存します。メール通知の分析結果リンクは従来どおり presigned URL の `.html` を指します。日次の収集記事一覧は `_articles.txt` のままです。
+週次・月次・四半期の入力には `.md` を優先して使い、移行期間の互換用として過去の `.txt` も参照します。四半期分析は `quarterly/FY2026-Q1.md` と `quarterly/FY2026-Q1.html` のように保存します。メール通知には、対象処理で生成したHTMLレポートと `index.html` の CloudFront リンクだけを載せます。日次の収集記事一覧は `_articles.txt` として保存しますが、メール通知には含めません。
 
 メール通知:
 
 - SES 送信元と sandbox 環境の宛先が検証済みであること
-- Lambda 実行ロールに `secretsmanager:GetSecretValue` があること
-- Secret JSON に `aws_access_key_id` と `aws_secret_access_key` があること
-- Secret JSON に `aws_session_token` がないこと
-- メール本文の presigned URL に `X-Amz-Security-Token` が出ていないこと
-- メール本文の分析結果リンクが `.html` を指していること
-- URL が `presigned_url_expires_seconds` の期間内に S3 オブジェクトを取得できること
+- `public_html.base_url` が CloudFront のベースURLになっていること
+- メール本文の分析結果リンクが CloudFront の `.html` を指していること
+- メール本文に `index.html` の CloudFront リンクが含まれること
+- 日次メール本文に `_articles.txt` が含まれないこと
 
 CloudWatch Logs:
 
@@ -671,11 +667,11 @@ aws iam put-role-policy \
 
 必要なプレフィックスは `config/*`, `daily/*`, `weekly/*`, `monthly/*`, `quarterly/*`, 旧互換の `responses/*` です。
 
-### Secrets Manager アクセス拒否
+### CloudFront URL がメールに出ない
 
-`deploy/policies/permissions-policy.json` の `secretsmanager:GetSecretValue` を実アカウント ID に置換し、Lambda 実行ロールへ再適用してください。Secret 名が `config/config.json` の `presigned_url_signing_secret_id` と一致していることも確認します。
+`public_html.base_url` が空でないこと、CloudFront distribution の domain name を `public_html_cloudfront_domain_name` に設定して `make tf-apply` 済みであることを確認します。
 
-### presigned URL が 7 日より早く失効する
+### Legacy: presigned URL が 7 日より早く失効する
 
 `presigned_url_signer_type` が `iam_user_secret` で、Secret に `aws_session_token` が含まれていないことを確認します。メール本文の URL に `X-Amz-Security-Token` が含まれる場合、一時認証情報で署名されています。
 

@@ -19,7 +19,7 @@ graph TD
 2. Lambda が S3 の設定ファイルとプロンプトを読み込みます。
 3. 日次分析では RSS と記事本文を取得し、Bedrock で分析します。
 4. 週次・月次・四半期分析では S3 の前段レポートを読み込み、Bedrock で集約します。
-5. 分析結果と記事一覧を S3 に保存し、設定が有効な場合は SES で presigned URL を通知します。
+5. 分析結果と記事一覧を S3 に保存し、設定が有効な場合は SES で CloudFront 公開URLを通知します。
 
 ## 主な機能
 
@@ -28,8 +28,7 @@ graph TD
 - Amazon Bedrock Claude モデルによる分析レポート生成
 - 分析結果のテキスト保存と公開用 HTML 保存
 - S3 配置の `config.json` とプロンプトによる設定外部化
-- Amazon SES によるメール通知
-- Secrets Manager に保存した署名用 IAM ユーザーでの長期 presigned URL 生成
+- Amazon SES による CloudFront リンク通知
 - EventBridge によるスケジュール実行
 
 ## 使用技術
@@ -88,7 +87,7 @@ source .venv/bin/activate
 cp infra/terraform/terraform.tfvars.example infra/terraform/terraform.tfvars
 ```
 
-Terraform は `config/config.json` と 4 種類のプロンプトを S3 の `config/` 配下へアップロードします。`bedrock_model`, `bedrock_region`, `email_notification.enabled`, `email_notification.sender`, presigned URL 署名用 Secret 名は Terraform 変数で上書きされます。
+Terraform は `config/config.json` と 4 種類のプロンプトを S3 の `config/` 配下へアップロードします。`bedrock_model`, `bedrock_region`, `email_notification.enabled`, `email_notification.sender`, `public_html.base_url` は Terraform 変数で上書きされます。
 
 ### 3. パッケージ作成
 
@@ -116,7 +115,7 @@ Terraform は以下を管理します。
 - Lambda Layer version と Lambda 関数
 - EventBridge 4 ルール、ターゲット、Lambda invoke permission
 - Secrets Manager Secret コンテナ
-- presigned URL 署名用 IAM ユーザーと S3 読み取りポリシー
+- 旧 presigned URL 署名用 IAM ユーザーと S3 読み取りポリシー
 - 任意の SES identity 作成
 
 長期アクセスキーは Terraform で作成しません。`aws_iam_access_key` は秘密値を Terraform state に残すため、署名用 IAM ユーザーのアクセスキー作成と Secret への登録は手動で行います。
@@ -165,9 +164,9 @@ S3 に配置する `config/config.json` でモデル、プロンプト、出力�
 - `bedrock_region`: Bedrock 呼び出しリージョン
 - `prompt_paths`: `daily`, `weekly`, `monthly`, `quarterly` ごとのプロンプトパス
 - `output_prefixes`: 分析結果の S3 プレフィックス
-- `public_html`: CloudFront 公開用 HTML コピーの有効化と S3 プレフィックス
+- `public_html`: CloudFront 公開用 HTML コピーの有効化、S3 プレフィックス、公開ベースURL
 - `news_scraping`: RSS と本文取得の対象・並列数・本文長など
-- `email_notification`: SES 通知と presigned URL 署名方式
+- `email_notification`: SES 通知の有効化、送信元、通知先
 
 ## CloudFront 公開
 
@@ -191,20 +190,15 @@ CloudFront distribution は Terraform では作成しません。AWS Console で
 
 CloudFront は S3 website endpoint ではなく通常の S3 origin + OAC を使い、bucket policy は `public/*` の `s3:GetObject` だけを手動作成した CloudFront distribution に許可します。`config/`、Markdown、記事一覧 txt、元の `daily/weekly/monthly/quarterly/` は公開対象外です。既存 HTML を初回公開する場合は `make publish-existing-html` を実行します。
 
-週次・月次・四半期分析の入力には `.md` を優先して使い、移行期間の互換用として過去の `.txt` も参照します。四半期分析は `monthly/YYYY-MM.md` または `monthly/YYYY-MM.txt` を入力にし、`quarterly/FY2026-Q1.md` と `quarterly/FY2026-Q1.html` の形式で保存します。メール通知の「分析結果」リンクは従来どおり presigned URL の `.html` を指します。日次の収集記事一覧は `daily/YYYY-MM-DD_articles.txt` のままです。
+週次・月次・四半期分析の入力には `.md` を優先して使い、移行期間の互換用として過去の `.txt` も参照します。四半期分析は `monthly/YYYY-MM.md` または `monthly/YYYY-MM.txt` を入力にし、`quarterly/FY2026-Q1.md` と `quarterly/FY2026-Q1.html` の形式で保存します。メール通知には対象処理で生成したHTMLレポートと `index.html` の CloudFront リンクだけを載せます。日次の収集記事一覧は `daily/YYYY-MM-DD_articles.txt` として保存しますが、メール通知には含めません。
 
 ### メール通知
 
-`email_notification.enabled` を `true` にすると、分析完了後に S3 オブジェクトへの presigned URL を SES で送信します。主な項目は次のとおりです。
+`email_notification.enabled` を `true` にすると、分析完了後に CloudFront 公開URLを SES で送信します。主な項目は次のとおりです。
 
 - `enabled_analysis_types`: 通知対象の分析種別。例: `["daily", "weekly", "monthly", "quarterly"]`
 - `sender`: SES で検証済みの送信元アドレス
 - `recipients`: 通知先アドレス
-- `presigned_url_expires_seconds`: URL 有効期限。Signature Version 4 の上限に合わせ 604800 秒以下
-- `presigned_url_signer_type`: `iam_user_secret` を指定すると Secrets Manager の IAM ユーザーキーで署名
-- `presigned_url_signing_secret_id`: 署名用 IAM ユーザーキーを保存した Secret 名または ARN
-- `presigned_url_signing_secret_region`: Secret を取得するリージョン
-- `presigned_url_s3_region`: presigned URL を生成する S3 クライアントのリージョン
 - `fail_on_send_error`: メール送信失敗時に Lambda を失敗扱いにするか
 
-署名用 IAM ユーザー、Secrets Manager、SES sandbox、`aws_session_token` を含めない確認などの運用手順は [LAMBDA_DEPLOYMENT.md](./LAMBDA_DEPLOYMENT.md) に集約しています。
+メール通知を有効にする場合は、`public_html.base_url` に CloudFront のベースURLが設定されている必要があります。
