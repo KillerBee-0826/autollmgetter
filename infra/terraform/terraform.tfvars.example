@@ -9,11 +9,10 @@ bedrock_region   = "us-east-1"
 
 email_notification_enabled = true
 ses_sender_identity        = "sender@example.com"
-create_ses_identity        = false
-presign_secret_name        = "claude-news-analyzer/s3-presign-user"
+create_ses_identity = false
+presign_secret_name = "claude-news-analyzer/s3-presign-user"
 
-enable_public_html_cloudfront = true
-public_html_prefix            = "public"
-cloudfront_price_class        = "PriceClass_200"
-cloudfront_default_ttl        = 300
-cloudfront_max_ttl            = 86400
+public_html_enabled                     = true
+public_html_prefix                      = "public"
+public_html_cloudfront_distribution_arn = ""
+public_html_cloudfront_domain_name      = ""

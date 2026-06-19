@@ -112,8 +112,8 @@ variable "s3_force_destroy" {
   default     = false
 }
 
-variable "enable_public_html_cloudfront" {
-  description = "Create a CloudFront distribution that exposes only HTML under the public_html_prefix S3 prefix via OAC."
+variable "public_html_enabled" {
+  description = "Save generated HTML reports under public_html_prefix for a manually managed CloudFront distribution."
   type        = bool
   default     = true
 }
@@ -129,29 +129,14 @@ variable "public_html_prefix" {
   }
 }
 
-variable "cloudfront_price_class" {
-  description = "CloudFront price class for the public HTML distribution."
+variable "public_html_cloudfront_distribution_arn" {
+  description = "ARN of the manually managed CloudFront distribution. When set, Terraform grants it s3:GetObject for public_html_prefix/*."
   type        = string
-  default     = "PriceClass_200"
-
-  validation {
-    condition = contains([
-      "PriceClass_100",
-      "PriceClass_200",
-      "PriceClass_All"
-    ], var.cloudfront_price_class)
-    error_message = "cloudfront_price_class must be PriceClass_100, PriceClass_200, or PriceClass_All."
-  }
+  default     = ""
 }
 
-variable "cloudfront_default_ttl" {
-  description = "Default TTL in seconds for public HTML CloudFront cache."
-  type        = number
-  default     = 300
-}
-
-variable "cloudfront_max_ttl" {
-  description = "Maximum TTL in seconds for public HTML CloudFront cache."
-  type        = number
-  default     = 86400
+variable "public_html_cloudfront_domain_name" {
+  description = "Domain name of the manually managed CloudFront distribution, used only for Terraform outputs and documentation."
+  type        = string
+  default     = ""
 }

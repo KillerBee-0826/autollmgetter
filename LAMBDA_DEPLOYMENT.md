@@ -71,18 +71,17 @@ cp infra/terraform/terraform.tfvars.example infra/terraform/terraform.tfvars
 - `weekly_schedule_expression`
 - `monthly_schedule_expression`
 - `quarterly_schedule_expression`
-- `enable_public_html_cloudfront`
+- `public_html_enabled`
 - `public_html_prefix`
-- `cloudfront_price_class`
-- `cloudfront_default_ttl`
-- `cloudfront_max_ttl`
+- `public_html_cloudfront_distribution_arn`
+- `public_html_cloudfront_domain_name`
 
 `infra/terraform/terraform.tfvars` は Git 管理しません。秘密値は書かないでください。
 
 ## 3. Terraform が管理する AWS リソース
 
 - S3 bucket、SSE-S3 暗号化、バージョニング、公開アクセスブロック
-- CloudFront distribution、Origin Access Control、cache policy、`public/` 限定の S3 bucket policy
+- 手動作成した CloudFront distribution 向けの `public/` 限定 S3 bucket policy
 - S3 `config/config.json` と 4 種類のプロンプト
 - Lambda execution role と inline policy
 - Lambda Layer version
@@ -104,6 +103,20 @@ Terraform は `config/config.json` を読み込み、以下の値を変数で上
 - `email_notification.presigned_url_s3_region`
 - `public_html.enabled`
 - `public_html.prefix`
+
+CloudFront distribution は Terraform では作成しません。Free plan で運用するため、AWS Console で CloudFront distribution を手動作成します。作成後に `public_html_cloudfront_distribution_arn` を設定すると、Terraform はその distribution に対して `public/*` の `s3:GetObject` だけを許可する bucket policy を作成します。`public_html_cloudfront_domain_name` は output と手順確認用です。
+
+手動作成時の推奨設定:
+
+- Pricing plan: Free
+- Origin: S3 bucket regional domain
+- Origin path: `/public`
+- Origin access: Origin Access Control
+- OAC signing behavior: always
+- Viewer protocol policy: redirect HTTP to HTTPS
+- Allowed methods: GET, HEAD
+- Response headers policy: AWS managed SecurityHeadersPolicy
+- Cache TTL: min 0, default 300, max 86400 を目安
 
 ## 4. Terraform 実行
 
@@ -214,7 +227,7 @@ git status --short
 - EventBridge rule が `daily`, `weekly`, `monthly`, `quarterly` の4種類あること
 - S3 `config/` に `config.json` と4種類のプロンプトがあること
 - CloudWatch Logs に実行ログが出ること
-- CloudFront を有効化している場合、S3 bucket policy の Resource が `public/*` のみであること
+- `public_html_cloudfront_distribution_arn` を設定している場合、S3 bucket policy の Resource が `public/*` のみであること
 
 ## Manual/legacy AWS CLI 手順
 
@@ -609,10 +622,10 @@ make publish-existing-html
 CloudFront のキャッシュを明示的に破棄する場合:
 
 ```bash
-CLOUDFRONT_DISTRIBUTION_ID="$(terraform -chdir=infra/terraform output -raw cloudfront_distribution_id)" make cf-invalidate
+CLOUDFRONT_DISTRIBUTION_ID="<manual-cloudfront-distribution-id>" make cf-invalidate
 ```
 
-CloudFront は通常の S3 origin + OAC を使います。S3 website endpoint や public bucket policy は使いません。`config/`、Markdown、記事一覧 txt、元の `daily/weekly/monthly/quarterly/` は公開対象外です。公開確認では `https://<cloudfront-domain>/daily/<file>.html` が 200、`https://<cloudfront-domain>/config/config.json` が 403 または 404、S3 直 URL が匿名アクセス不可であることを確認してください。
+CloudFront は Free plan で手動作成し、通常の S3 origin + OAC を使います。S3 website endpoint や public bucket policy は使いません。`config/`、Markdown、記事一覧 txt、元の `daily/weekly/monthly/quarterly/` は公開対象外です。公開確認では `https://<cloudfront-domain>/daily/<file>.html` が 200、`https://<cloudfront-domain>/config/config.json` が 403 または 404、S3 直 URL が匿名アクセス不可であることを確認してください。
 
 週次・月次・四半期の入力には `.md` を優先して使い、移行期間の互換用として過去の `.txt` も参照します。四半期分析は `quarterly/FY2026-Q1.md` と `quarterly/FY2026-Q1.html` のように保存します。メール通知の分析結果リンクは従来どおり presigned URL の `.html` を指します。日次の収集記事一覧は `_articles.txt` のままです。
 

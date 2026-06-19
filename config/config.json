@@ -36,7 +36,7 @@
     "enabled_analysis_types": ["daily", "weekly", "monthly", "quarterly"],
     "ses_region": "ap-northeast-1",
     "sender": "ryusyukuri@gmail.com",
-    "recipients": ["shiny.1k2no-meteor@ezweb.ne.jp","ryu_syukuri@hotmail.co.jp"],
+    "recipients": ["ryu_syukuri@hotmail.co.jp"],
     "presigned_url_expires_seconds": 604800,
     "presigned_url_signer_type": "iam_user_secret",
     "presigned_url_signing_secret_id": "claude-news-analyzer/s3-presign-user",

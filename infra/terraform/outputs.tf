@@ -29,16 +29,16 @@ output "signer_iam_user_name" {
 }
 
 output "cloudfront_distribution_id" {
-  description = "CloudFront distribution ID for public HTML reports."
-  value       = var.enable_public_html_cloudfront ? aws_cloudfront_distribution.public_html[0].id : null
+  description = "Manually managed CloudFront distribution ID for public HTML reports, derived from public_html_cloudfront_distribution_arn when set."
+  value       = var.public_html_cloudfront_distribution_arn != "" ? element(split("/", var.public_html_cloudfront_distribution_arn), length(split("/", var.public_html_cloudfront_distribution_arn)) - 1) : null
 }
 
 output "cloudfront_domain_name" {
-  description = "CloudFront domain name for public HTML reports."
-  value       = var.enable_public_html_cloudfront ? aws_cloudfront_distribution.public_html[0].domain_name : null
+  description = "Manually managed CloudFront domain name for public HTML reports."
+  value       = var.public_html_cloudfront_domain_name != "" ? var.public_html_cloudfront_domain_name : null
 }
 
 output "public_html_base_url" {
   description = "Base URL for public HTML reports."
-  value       = var.enable_public_html_cloudfront ? "https://${aws_cloudfront_distribution.public_html[0].domain_name}" : null
+  value       = var.public_html_cloudfront_domain_name != "" ? "https://${var.public_html_cloudfront_domain_name}" : null
 }

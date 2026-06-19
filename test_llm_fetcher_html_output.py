@@ -70,8 +70,63 @@ class LLMFetcherHtmlOutputTests(unittest.TestCase):
             [
                 "daily/2026-05-19.html",
                 "public/daily/2026-05-19.html",
+                "public/index.html",
             ],
         )
+
+    def test_save_public_html_copy_refreshes_index_with_report_links(self):
+        fetcher = self._build_fetcher()
+        fetcher.config["public_html"] = {
+            "enabled": True,
+            "prefix": "public",
+        }
+        fetcher._get_now = Mock(return_value=datetime(2026, 5, 20, 9, 30, 0))
+        fetcher.s3_handler.list_objects.return_value = [
+            "public/index.html",
+            "public/daily/2026-05-19.html",
+            "public/daily/2026-05-20.html",
+            "public/weekly/2026-05-10_2026-05-16.html",
+            "public/monthly/2026-05.html",
+            "public/quarterly/FY2026-Q1.html",
+            "public/daily/2026-05-20.md",
+            "daily/2026-05-20.html",
+        ]
+
+        public_key = fetcher._save_public_html_copy(
+            "daily/2026-05-20.html",
+            "<!doctype html>"
+        )
+
+        self.assertEqual(public_key, "public/daily/2026-05-20.html")
+        self.assertEqual(
+            [call.args[0] for call in fetcher.s3_handler.save_html.call_args_list],
+            [
+                "public/daily/2026-05-20.html",
+                "public/index.html",
+            ],
+        )
+        index_html = fetcher.s3_handler.save_html.call_args_list[-1].args[1]
+        self.assertIn("<h1>ニュース分析レポート一覧</h1>", index_html)
+        self.assertIn('<a href="daily/2026-05-20.html">2026-05-20</a>', index_html)
+        self.assertIn('<a href="daily/2026-05-19.html">2026-05-19</a>', index_html)
+        self.assertIn('<a href="weekly/2026-05-10_2026-05-16.html">2026-05-10_2026-05-16</a>', index_html)
+        self.assertIn('<a href="monthly/2026-05.html">2026-05</a>', index_html)
+        self.assertIn('<a href="quarterly/FY2026-Q1.html">FY2026-Q1</a>', index_html)
+        self.assertNotIn('href="index.html"', index_html)
+        self.assertNotIn("2026-05-20.md", index_html)
+        self.assertNotIn('href="daily/2026-05-20.html">daily/2026-05-20</a>', index_html)
+
+    def test_save_public_html_copy_does_not_refresh_index_when_disabled(self):
+        fetcher = self._build_fetcher()
+
+        public_key = fetcher._save_public_html_copy(
+            "daily/2026-05-20.html",
+            "<!doctype html>"
+        )
+
+        self.assertIsNone(public_key)
+        fetcher.s3_handler.list_objects.assert_not_called()
+        fetcher.s3_handler.save_html.assert_not_called()
 
     def test_save_periodic_response_saves_markdown_and_returns_html_key(self):
         fetcher = self._build_fetcher()
@@ -116,6 +171,7 @@ class LLMFetcherHtmlOutputTests(unittest.TestCase):
             [
                 "weekly/2026-05-10_2026-05-16.html",
                 "public/weekly/2026-05-10_2026-05-16.html",
+                "public/index.html",
             ],
         )
 

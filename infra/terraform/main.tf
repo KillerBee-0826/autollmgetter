@@ -27,7 +27,7 @@ locals {
   public_html_config = merge(
     try(local.base_config.public_html, {}),
     {
-      enabled = var.enable_public_html_cloudfront
+      enabled = var.public_html_enabled
       prefix  = trim(var.public_html_prefix, "/")
     }
   )
@@ -110,95 +110,9 @@ resource "aws_s3_bucket_versioning" "reports" {
   }
 }
 
-resource "aws_cloudfront_origin_access_control" "public_html" {
-  provider = aws.primary
-  count    = var.enable_public_html_cloudfront ? 1 : 0
-
-  name                              = "${var.project_name}-public-html-oac"
-  description                       = "OAC for ${var.project_name} public HTML under s3://${aws_s3_bucket.reports.bucket}/${local.public_html_config.prefix}/"
-  origin_access_control_origin_type = "s3"
-  signing_behavior                  = "always"
-  signing_protocol                  = "sigv4"
-}
-
-resource "aws_cloudfront_cache_policy" "public_html" {
-  provider = aws.primary
-  count    = var.enable_public_html_cloudfront ? 1 : 0
-
-  name        = "${var.project_name}-public-html-cache"
-  comment     = "Cache policy for ${var.project_name} public HTML"
-  default_ttl = var.cloudfront_default_ttl
-  max_ttl     = var.cloudfront_max_ttl
-  min_ttl     = 0
-
-  parameters_in_cache_key_and_forwarded_to_origin {
-    cookies_config {
-      cookie_behavior = "none"
-    }
-
-    headers_config {
-      header_behavior = "none"
-    }
-
-    query_strings_config {
-      query_string_behavior = "none"
-    }
-
-    enable_accept_encoding_brotli = true
-    enable_accept_encoding_gzip   = true
-  }
-}
-
-data "aws_cloudfront_response_headers_policy" "security_headers" {
-  provider = aws.primary
-  count    = var.enable_public_html_cloudfront ? 1 : 0
-
-  name = "Managed-SecurityHeadersPolicy"
-}
-
-resource "aws_cloudfront_distribution" "public_html" {
-  provider = aws.primary
-  count    = var.enable_public_html_cloudfront ? 1 : 0
-
-  enabled         = true
-  is_ipv6_enabled = true
-  comment         = "${var.project_name} public HTML reports"
-  price_class     = var.cloudfront_price_class
-
-  origin {
-    domain_name              = aws_s3_bucket.reports.bucket_regional_domain_name
-    origin_id                = "s3-${aws_s3_bucket.reports.id}-${local.public_html_config.prefix}"
-    origin_path              = "/${local.public_html_config.prefix}"
-    origin_access_control_id = aws_cloudfront_origin_access_control.public_html[0].id
-  }
-
-  default_cache_behavior {
-    target_origin_id           = "s3-${aws_s3_bucket.reports.id}-${local.public_html_config.prefix}"
-    viewer_protocol_policy     = "redirect-to-https"
-    allowed_methods            = ["GET", "HEAD"]
-    cached_methods             = ["GET", "HEAD"]
-    compress                   = true
-    cache_policy_id            = aws_cloudfront_cache_policy.public_html[0].id
-    response_headers_policy_id = data.aws_cloudfront_response_headers_policy.security_headers[0].id
-  }
-
-  restrictions {
-    geo_restriction {
-      restriction_type = "none"
-    }
-  }
-
-  viewer_certificate {
-    cloudfront_default_certificate = true
-    minimum_protocol_version       = "TLSv1.2_2021"
-  }
-
-  tags = local.common_tags
-}
-
 resource "aws_s3_bucket_policy" "reports_cloudfront_public_html" {
   provider = aws.primary
-  count    = var.enable_public_html_cloudfront ? 1 : 0
+  count    = var.public_html_enabled && var.public_html_cloudfront_distribution_arn != "" ? 1 : 0
 
   bucket = aws_s3_bucket.reports.id
 
@@ -215,7 +129,7 @@ resource "aws_s3_bucket_policy" "reports_cloudfront_public_html" {
         Resource = "${aws_s3_bucket.reports.arn}/${local.public_html_config.prefix}/*"
         Condition = {
           StringEquals = {
-            "AWS:SourceArn" = aws_cloudfront_distribution.public_html[0].arn
+            "AWS:SourceArn" = var.public_html_cloudfront_distribution_arn
           }
         }
       }

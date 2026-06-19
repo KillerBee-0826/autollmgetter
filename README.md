@@ -110,7 +110,7 @@ make tf-apply
 Terraform は以下を管理します。
 
 - S3 バケット、暗号化、バージョニング、公開アクセスブロック
-- CloudFront distribution、OAC、`public/` 限定の S3 bucket policy
+- 手動作成した CloudFront distribution 向けの `public/` 限定 S3 bucket policy
 - S3 `config/config.json` と各プロンプト
 - Lambda 実行ロールとインラインポリシー
 - Lambda Layer version と Lambda 関数
@@ -169,6 +169,18 @@ S3 に配置する `config/config.json` でモデル、プロンプト、出力�
 - `news_scraping`: RSS と本文取得の対象・並列数・本文長など
 - `email_notification`: SES 通知と presigned URL 署名方式
 
+## CloudFront 公開
+
+CloudFront distribution は Terraform では作成しません。AWS Console で CloudFront の Free plan を選び、通常の S3 origin + OAC で手動作成します。推奨設定:
+
+- Origin domain: S3 バケットの regional domain
+- Origin path: `/public`
+- Origin access: OAC、`signing_behavior = always`
+- Viewer protocol policy: redirect HTTP to HTTPS
+- Allowed methods: GET, HEAD
+
+作成後、distribution ARN と domain name を `infra/terraform/terraform.tfvars` に設定して `make tf-plan` / `make tf-apply` を実行すると、Terraform が `public/*` のみを CloudFront に許可する bucket policy を作成します。
+
 ## 出力ファイル
 
 分析結果はMarkdown本文の `.md` と、閲覧用の `.html` を同じプレフィックスに保存します。`public_html.enabled` が `true` の場合、HTML だけを `public/` 配下にも追加保存します。例:
@@ -177,7 +189,7 @@ S3 に配置する `config/config.json` でモデル、プロンプト、出力�
 - CloudFront 公開用実体: `s3://claude-news-analyzer/public/daily/YYYY-MM-DD.html`
 - 公開 URL: `https://<cloudfront-domain>/daily/YYYY-MM-DD.html`
 
-CloudFront は S3 website endpoint ではなく通常の S3 origin + OAC を使い、bucket policy は `public/*` の `s3:GetObject` だけを CloudFront distribution に許可します。`config/`、Markdown、記事一覧 txt、元の `daily/weekly/monthly/quarterly/` は公開対象外です。既存 HTML を初回公開する場合は `make publish-existing-html` を実行します。
+CloudFront は S3 website endpoint ではなく通常の S3 origin + OAC を使い、bucket policy は `public/*` の `s3:GetObject` だけを手動作成した CloudFront distribution に許可します。`config/`、Markdown、記事一覧 txt、元の `daily/weekly/monthly/quarterly/` は公開対象外です。既存 HTML を初回公開する場合は `make publish-existing-html` を実行します。
 
 週次・月次・四半期分析の入力には `.md` を優先して使い、移行期間の互換用として過去の `.txt` も参照します。四半期分析は `monthly/YYYY-MM.md` または `monthly/YYYY-MM.txt` を入力にし、`quarterly/FY2026-Q1.md` と `quarterly/FY2026-Q1.html` の形式で保存します。メール通知の「分析結果」リンクは従来どおり presigned URL の `.html` を指します。日次の収集記事一覧は `daily/YYYY-MM-DD_articles.txt` のままです。
 
