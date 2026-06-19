@@ -36,6 +36,7 @@ graph TD
 
 - AWS Lambda, Amazon S3, Amazon Bedrock, Amazon SES, Amazon EventBridge, CloudWatch Logs, Secrets Manager
 - Python 3.11
+- Terraform, Makefile, Docker
 - `boto3`, `requests`, `feedparser`, `trafilatura`, `beautifulsoup4`, `chardet`
 
 ## ディレクトリ構成
@@ -60,6 +61,9 @@ bedrock-news-analyzer/
 │   ├── deploy.sh
 │   ├── build_layer.sh
 │   └── policies/
+├── infra/
+│   └── terraform/         # AWS リソース定義
+├── Makefile               # ローカル操作・Terraform実行入口
 ├── LAMBDA_DEPLOYMENT.md    # AWS デプロイ・運用手順
 ├── requirements.txt
 └── requirements-lambda.txt
@@ -72,38 +76,65 @@ bedrock-news-analyzer/
 ### 1. ローカル環境
 
 ```bash
-python3.11 -m venv .venv
+make setup
 source .venv/bin/activate
-pip install -r requirements.txt
 ```
 
-### 2. S3 設定ファイル
+### 2. Terraform 変数
 
-`config/config.json` と 4 種類のプロンプトを編集し、S3 の `config/` 配下へアップロードします。
+必要に応じて `infra/terraform/terraform.tfvars.example` を `infra/terraform/terraform.tfvars` にコピーし、バケット名、送信元 SES identity、Bedrock モデルを調整します。`*.tfvars` は Git 管理しません。
 
 ```bash
-aws s3 cp config/config.json s3://<your-bucket-name>/config/config.json
-aws s3 cp config/news_analysis_prompt.txt s3://<your-bucket-name>/config/news_analysis_prompt.txt
-aws s3 cp config/weekly_news_analysis_prompt.txt s3://<your-bucket-name>/config/weekly_news_analysis_prompt.txt
-aws s3 cp config/monthly_news_analysis_prompt.txt s3://<your-bucket-name>/config/monthly_news_analysis_prompt.txt
-aws s3 cp config/quarterly_news_analysis_prompt.txt s3://<your-bucket-name>/config/quarterly_news_analysis_prompt.txt
+cp infra/terraform/terraform.tfvars.example infra/terraform/terraform.tfvars
 ```
 
-### 3. 初回デプロイ・再デプロイ
+Terraform は `config/config.json` と 4 種類のプロンプトを S3 の `config/` 配下へアップロードします。`bedrock_model`, `bedrock_region`, `email_notification.enabled`, `email_notification.sender`, presigned URL 署名用 Secret 名は Terraform 変数で上書きされます。
 
-Lambda 実行ロールと周辺 AWS リソースを準備したうえで、同じスクリプトを初回構築と再デプロイに使います。
+### 3. パッケージ作成
 
 ```bash
-export LAMBDA_ROLE_ARN="arn:aws:iam::ACCOUNT_ID:role/lambda-claude-news-analyzer"
-export S3_BUCKET_NAME="claude-news-analyzer"
-export AWS_REGION="ap-northeast-1"
-./deploy/deploy.sh
+make package-layer
+make package-function
 ```
 
-Lambda 実行ロールの権限例は `deploy/policies/permissions-policy.json` を正本とします。メール通知で Secrets Manager の署名用 IAM ユーザーを使う場合は、同ポリシーの `secretsmanager:GetSecretValue` も反映してください。
-Lambda 実行ロールは `daily/*`, `weekly/*`, `monthly/*`, `quarterly/*` の読み書きが必要です。presigned URL 署名用 IAM ユーザーにも、メールで共有する `quarterly/*` への `s3:GetObject` を含めてください。
+生成される `lambda-function.zip` と `lambda-layer.zip` は Git 管理しません。
 
-### 4. ローカル実行
+### 4. Terraform 初回構築・更新
+
+```bash
+make tf-init
+make tf-plan
+make tf-apply
+```
+
+Terraform は以下を管理します。
+
+- S3 バケット、暗号化、バージョニング、公開アクセスブロック
+- CloudFront distribution、OAC、`public/` 限定の S3 bucket policy
+- S3 `config/config.json` と各プロンプト
+- Lambda 実行ロールとインラインポリシー
+- Lambda Layer version と Lambda 関数
+- EventBridge 4 ルール、ターゲット、Lambda invoke permission
+- Secrets Manager Secret コンテナ
+- presigned URL 署名用 IAM ユーザーと S3 読み取りポリシー
+- 任意の SES identity 作成
+
+長期アクセスキーは Terraform で作成しません。`aws_iam_access_key` は秘密値を Terraform state に残すため、署名用 IAM ユーザーのアクセスキー作成と Secret への登録は手動で行います。
+
+### 5. Secret 登録
+
+`make tf-apply` 後に出力される `signer_iam_user_name` のアクセスキーを AWS CLI またはコンソールで作成し、Secret に JSON で登録します。`aws_session_token` は含めません。
+
+```bash
+aws secretsmanager put-secret-value \
+  --secret-id claude-news-analyzer/s3-presign-user \
+  --region ap-northeast-1 \
+  --secret-string '{"aws_access_key_id":"AKIA...","aws_secret_access_key":"..."}'
+```
+
+新規 Secret に初回値を入れる場合も `put-secret-value` を使えます。アクセスキー値は Terraform 変数や state に入れないでください。
+
+### 6. ローカル実行
 
 AWS 認証情報と S3 バケットを設定したうえで、モックイベントで Lambda 処理を実行できます。
 
@@ -112,9 +143,17 @@ export S3_BUCKET_NAME="your-s3-bucket-name"
 python lambda_handler.py
 ```
 
-### 5. EventBridge
+### 7. 手動 invoke
 
-各スケジュールのターゲット `Input` で `analysis_type` を渡します。四半期分析は月次分析の後に実行される想定で、例では `cron(0 3 1 1,4,7,10 ? *)` と `{"analysis_type":"quarterly"}` を使います。
+Terraform 適用後、日次処理を手動実行できます。
+
+```bash
+make invoke-daily
+```
+
+### 8. 手動/legacy デプロイ
+
+`deploy/deploy.sh` は当面残しますが、標準手順は Terraform です。手動で Lambda だけを更新する用途や切り戻し時の参考として利用してください。
 
 ## 設定ファイル
 
@@ -126,12 +165,21 @@ S3 に配置する `config/config.json` でモデル、プロンプト、出力�
 - `bedrock_region`: Bedrock 呼び出しリージョン
 - `prompt_paths`: `daily`, `weekly`, `monthly`, `quarterly` ごとのプロンプトパス
 - `output_prefixes`: 分析結果の S3 プレフィックス
+- `public_html`: CloudFront 公開用 HTML コピーの有効化と S3 プレフィックス
 - `news_scraping`: RSS と本文取得の対象・並列数・本文長など
 - `email_notification`: SES 通知と presigned URL 署名方式
 
 ## 出力ファイル
 
-分析結果はMarkdown本文の `.md` と、閲覧用の `.html` を同じプレフィックスに保存します。週次・月次・四半期分析の入力には `.md` を優先して使い、移行期間の互換用として過去の `.txt` も参照します。四半期分析は `monthly/YYYY-MM.md` または `monthly/YYYY-MM.txt` を入力にし、`quarterly/FY2026-Q1.md` と `quarterly/FY2026-Q1.html` の形式で保存します。メール通知の「分析結果」リンクは `.html` を指します。日次の収集記事一覧は `daily/YYYY-MM-DD_articles.txt` のままです。
+分析結果はMarkdown本文の `.md` と、閲覧用の `.html` を同じプレフィックスに保存します。`public_html.enabled` が `true` の場合、HTML だけを `public/` 配下にも追加保存します。例:
+
+- 既存の保存先: `s3://claude-news-analyzer/daily/YYYY-MM-DD.html`
+- CloudFront 公開用実体: `s3://claude-news-analyzer/public/daily/YYYY-MM-DD.html`
+- 公開 URL: `https://<cloudfront-domain>/daily/YYYY-MM-DD.html`
+
+CloudFront は S3 website endpoint ではなく通常の S3 origin + OAC を使い、bucket policy は `public/*` の `s3:GetObject` だけを CloudFront distribution に許可します。`config/`、Markdown、記事一覧 txt、元の `daily/weekly/monthly/quarterly/` は公開対象外です。既存 HTML を初回公開する場合は `make publish-existing-html` を実行します。
+
+週次・月次・四半期分析の入力には `.md` を優先して使い、移行期間の互換用として過去の `.txt` も参照します。四半期分析は `monthly/YYYY-MM.md` または `monthly/YYYY-MM.txt` を入力にし、`quarterly/FY2026-Q1.md` と `quarterly/FY2026-Q1.html` の形式で保存します。メール通知の「分析結果」リンクは従来どおり presigned URL の `.html` を指します。日次の収集記事一覧は `daily/YYYY-MM-DD_articles.txt` のままです。
 
 ### メール通知
 

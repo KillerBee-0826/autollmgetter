@@ -350,6 +350,35 @@ class LLMFetcher:
         prefixes = self.config.get("output_prefixes", {})
         return prefixes.get(analysis_type, analysis_type)
 
+    def _get_public_html_prefix(self) -> Optional[str]:
+        """公開HTMLコピー用のS3プレフィックスを取得する。無効時はNoneを返す"""
+        public_html = self.config.get("public_html", {})
+        if not public_html.get("enabled", False):
+            return None
+
+        prefix = public_html.get("prefix", "public").strip("/")
+        if not prefix:
+            self.logger.warning("public_html.prefix が空のため公開HTMLコピーをスキップします")
+            return None
+
+        return prefix
+
+    def _save_public_html_copy(self, html_key: str, html_content: str) -> Optional[str]:
+        """S3上のHTMLを公開用プレフィックス配下へ追加保存する"""
+        if self.s3_handler is None or not html_key.endswith(".html"):
+            return None
+
+        public_prefix = self._get_public_html_prefix()
+        if public_prefix is None:
+            return None
+
+        public_key = f"{public_prefix}/{html_key}"
+        self.s3_handler.save_html(public_key, html_content)
+        self.logger.info(
+            f"公開用HTMLをS3に保存しました: s3://{self.s3_handler.bucket_name}/{public_key}"
+        )
+        return public_key
+
     def _get_now(self) -> datetime:
         """設定されたタイムゾーンの現在時刻を取得する"""
         timezone_name = self.config.get("news_scraping", {}).get("timezone", "Asia/Tokyo")
@@ -599,6 +628,7 @@ class LLMFetcher:
                 html_content = render_report_html("ニュース分析レポート", content)
                 self.s3_handler.save_html(html_key, html_content)
                 self.logger.info(f"LLM分析HTMLをS3に保存しました: s3://{self.s3_handler.bucket_name}/{html_key}")
+                self._save_public_html_copy(html_key, html_content)
                 if section == "news_analysis":
                     return html_key
                 return s3_key
@@ -659,6 +689,7 @@ class LLMFetcher:
             html_content = render_report_html(title, content)
             self.s3_handler.save_html(html_key, html_content)
             self.logger.info(f"{title}HTMLをS3に保存しました: s3://{self.s3_handler.bucket_name}/{html_key}")
+            self._save_public_html_copy(html_key, html_content)
             return html_key
 
         responses_dir = Path(self.config["responses_dir"]) / prefix

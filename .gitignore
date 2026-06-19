@@ -31,5 +31,11 @@ lambda-layer.zip
 layer/
 output*.json
 
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfvars
+
 # User-generated data
 responses/

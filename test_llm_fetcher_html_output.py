@@ -51,6 +51,28 @@ class LLMFetcherHtmlOutputTests(unittest.TestCase):
         self.assertEqual(fetcher.s3_handler.save_html.call_args.args[0], "daily/2026-05-19.html")
         self.assertIn("<table>", fetcher.s3_handler.save_html.call_args.args[1])
 
+    def test_save_response_also_saves_public_html_copy_when_enabled(self):
+        fetcher = self._build_fetcher()
+        fetcher.config["public_html"] = {
+            "enabled": True,
+            "prefix": "public",
+        }
+
+        key = fetcher.save_response(
+            "日次分析",
+            date_str="2026-05-19",
+            section="news_analysis"
+        )
+
+        self.assertEqual(key, "daily/2026-05-19.html")
+        self.assertEqual(
+            [call.args[0] for call in fetcher.s3_handler.save_html.call_args_list],
+            [
+                "daily/2026-05-19.html",
+                "public/daily/2026-05-19.html",
+            ],
+        )
+
     def test_save_periodic_response_saves_markdown_and_returns_html_key(self):
         fetcher = self._build_fetcher()
 
@@ -73,6 +95,46 @@ class LLMFetcherHtmlOutputTests(unittest.TestCase):
             fetcher.s3_handler.save_html.call_args.args[0],
             "weekly/2026-05-10_2026-05-16.html"
         )
+
+    def test_save_periodic_response_also_saves_public_html_copy_when_enabled(self):
+        fetcher = self._build_fetcher()
+        fetcher.config["public_html"] = {
+            "enabled": True,
+            "prefix": "public",
+        }
+
+        key = fetcher.save_periodic_response(
+            "週間サマリー",
+            "weekly",
+            "2026-05-10_2026-05-16",
+            "週次ニュース分析レポート"
+        )
+
+        self.assertEqual(key, "weekly/2026-05-10_2026-05-16.html")
+        self.assertEqual(
+            [call.args[0] for call in fetcher.s3_handler.save_html.call_args_list],
+            [
+                "weekly/2026-05-10_2026-05-16.html",
+                "public/weekly/2026-05-10_2026-05-16.html",
+            ],
+        )
+
+    def test_save_formatted_articles_does_not_save_public_copy(self):
+        fetcher = self._build_fetcher()
+        fetcher.config["public_html"] = {
+            "enabled": True,
+            "prefix": "public",
+        }
+        fetcher._get_now = Mock(return_value=datetime(2026, 5, 19))
+
+        key = fetcher._save_formatted_articles("記事一覧")
+
+        self.assertEqual(key, "daily/2026-05-19_articles.txt")
+        fetcher.s3_handler.save_text.assert_called_once_with(
+            "daily/2026-05-19_articles.txt",
+            "記事一覧"
+        )
+        fetcher.s3_handler.save_html.assert_not_called()
 
     def test_load_daily_analysis_prefers_markdown_then_legacy_text(self):
         fetcher = self._build_fetcher()

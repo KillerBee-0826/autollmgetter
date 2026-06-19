@@ -1,6 +1,6 @@
 # AWS Lambda デプロイガイド
 
-このドキュメントは AWS 運用者向けの実行手順書です。初回構築、再デプロイ、S3 config アップロード、IAM、署名用 IAM ユーザー、Secrets Manager、SES、EventBridge、動作確認、ロールバック、トラブルシューティングをここに集約します。
+このドキュメントは AWS 運用者向けの実行手順書です。標準手順は Terraform + Makefile による初回構築、再デプロイ、S3 config アップロード、IAM、署名用 IAM ユーザー、Secrets Manager、SES、EventBridge、動作確認です。既存 AWS CLI 手順は末尾の manual/legacy 手順として残します。
 
 例では以下を使います。必要に応じて置き換えてください。
 
@@ -10,11 +10,14 @@ export S3_BUCKET_NAME="claude-news-analyzer"
 export LAMBDA_FUNCTION_NAME="claude-news-analyzer"
 export LAMBDA_ROLE_NAME="lambda-claude-news-analyzer"
 export ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+export PRESIGN_SECRET_NAME="claude-news-analyzer/s3-presign-user"
+export PROJECT_NAME="claude-news-analyzer"
 ```
 
 ## 前提条件
 
 - AWS CLI 設定済み
+- Terraform 1.5+
 - Docker（Lambda Layer 構築用）
 - Python 3.11+
 - zip コマンド
@@ -22,6 +25,200 @@ export ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
 - SES で送信元アドレスまたはドメインを検証済み
 
 必要な AWS 権限は Lambda、S3、IAM、EventBridge、CloudWatch Logs、Bedrock、SES、Secrets Manager です。
+
+## 1. 標準手順: Terraform + Makefile
+
+ローカル端末から以下の順序で構築・更新します。
+
+```bash
+make setup
+source .venv/bin/activate
+make test
+make package-layer
+make package-function
+make tf-init
+make tf-plan
+make tf-apply
+```
+
+`make package-layer` は Docker を使って `lambda-layer.zip` を作成します。`make package-function` は Lambda 関数コードを `lambda-function.zip` に固めます。Terraform はこの2つの zip が存在する前提で Lambda Layer version と Lambda 関数を作成・更新します。
+
+## 2. Terraform 変数
+
+必要に応じてサンプルをコピーして編集します。
+
+```bash
+cp infra/terraform/terraform.tfvars.example infra/terraform/terraform.tfvars
+```
+
+主な変数:
+
+- `project_name`
+- `aws_region`
+- `s3_bucket_name`
+- `lambda_function_name`
+- `lambda_layer_name`
+- `lambda_memory_size`
+- `lambda_timeout`
+- `lambda_runtime`
+- `bedrock_model_id`
+- `bedrock_region`
+- `email_notification_enabled`
+- `ses_sender_identity`
+- `create_ses_identity`
+- `presign_secret_name`
+- `daily_schedule_expression`
+- `weekly_schedule_expression`
+- `monthly_schedule_expression`
+- `quarterly_schedule_expression`
+- `enable_public_html_cloudfront`
+- `public_html_prefix`
+- `cloudfront_price_class`
+- `cloudfront_default_ttl`
+- `cloudfront_max_ttl`
+
+`infra/terraform/terraform.tfvars` は Git 管理しません。秘密値は書かないでください。
+
+## 3. Terraform が管理する AWS リソース
+
+- S3 bucket、SSE-S3 暗号化、バージョニング、公開アクセスブロック
+- CloudFront distribution、Origin Access Control、cache policy、`public/` 限定の S3 bucket policy
+- S3 `config/config.json` と 4 種類のプロンプト
+- Lambda execution role と inline policy
+- Lambda Layer version
+- Lambda function
+- CloudWatch Logs log group
+- EventBridge rules、targets、Lambda permissions
+- Secrets Manager secret container
+- presigned URL 署名用 IAM user と read-only S3 policy
+- 任意の SESv2 identity
+
+Terraform は `config/config.json` を読み込み、以下の値を変数で上書きした JSON を S3 に保存します。
+
+- `bedrock_model`
+- `bedrock_region`
+- `email_notification.enabled`
+- `email_notification.sender`
+- `email_notification.presigned_url_signing_secret_id`
+- `email_notification.presigned_url_signing_secret_region`
+- `email_notification.presigned_url_s3_region`
+- `public_html.enabled`
+- `public_html.prefix`
+
+## 4. Terraform 実行
+
+初回:
+
+```bash
+make tf-init
+make tf-plan
+make tf-apply
+```
+
+更新時:
+
+```bash
+make package-function
+make tf-plan
+make tf-apply
+```
+
+依存ライブラリを変更した場合は `make package-layer` も実行してください。`terraform plan` で作成/変更対象を確認してから `apply` します。
+
+既存の手動作成済みリソースを Terraform 管理へ移す場合は、`apply` の前に import してください。少なくとも既存 S3 バケット、Lambda 関数、IAM ロール、Secrets Manager Secret、EventBridge ルールが同名で存在する場合は import 対象です。
+
+```bash
+terraform -chdir=infra/terraform import 'aws_s3_bucket.reports' "${S3_BUCKET_NAME}"
+terraform -chdir=infra/terraform import 'aws_lambda_function.analyzer' "${LAMBDA_FUNCTION_NAME}"
+terraform -chdir=infra/terraform import 'aws_iam_role.lambda' "${LAMBDA_ROLE_NAME}"
+terraform -chdir=infra/terraform import 'aws_iam_role_policy.lambda' "${LAMBDA_ROLE_NAME}:${PROJECT_NAME}-permissions"
+terraform -chdir=infra/terraform import 'aws_secretsmanager_secret.presign_user' "${PRESIGN_SECRET_NAME}"
+terraform -chdir=infra/terraform import 'aws_cloudwatch_event_rule.analysis["daily"]' "${PROJECT_NAME}-daily"
+terraform -chdir=infra/terraform import 'aws_cloudwatch_event_rule.analysis["weekly"]' "${PROJECT_NAME}-weekly"
+terraform -chdir=infra/terraform import 'aws_cloudwatch_event_rule.analysis["monthly"]' "${PROJECT_NAME}-monthly"
+terraform -chdir=infra/terraform import 'aws_cloudwatch_event_rule.analysis["quarterly"]' "${PROJECT_NAME}-quarterly"
+terraform -chdir=infra/terraform import 'aws_cloudwatch_event_target.analysis["daily"]' "${PROJECT_NAME}-daily/1"
+terraform -chdir=infra/terraform import 'aws_cloudwatch_event_target.analysis["weekly"]' "${PROJECT_NAME}-weekly/1"
+terraform -chdir=infra/terraform import 'aws_cloudwatch_event_target.analysis["monthly"]' "${PROJECT_NAME}-monthly/1"
+terraform -chdir=infra/terraform import 'aws_cloudwatch_event_target.analysis["quarterly"]' "${PROJECT_NAME}-quarterly/1"
+terraform -chdir=infra/terraform import 'aws_lambda_permission.allow_eventbridge["daily"]' "${PROJECT_NAME}/${PROJECT_NAME}-daily-event"
+terraform -chdir=infra/terraform import 'aws_lambda_permission.allow_eventbridge["weekly"]' "${PROJECT_NAME}/${PROJECT_NAME}-weekly-event"
+terraform -chdir=infra/terraform import 'aws_lambda_permission.allow_eventbridge["monthly"]' "${PROJECT_NAME}/${PROJECT_NAME}-monthly-event"
+terraform -chdir=infra/terraform import 'aws_lambda_permission.allow_eventbridge["quarterly"]' "${PROJECT_NAME}/${PROJECT_NAME}-quarterly-event"
+
+```
+
+import 後は必ず `make tf-plan` で差分を確認してください。既存運用値と Terraform 変数が異なる場合、Terraform は変数側へ更新します。
+
+## 5. 署名用 IAM ユーザーと Secret 値
+
+Terraform は署名用 IAM ユーザーと Secrets Manager Secret コンテナだけを作成します。長期アクセスキーは Terraform で作成しません。`aws_iam_access_key` は秘密値を Terraform state に保存するためです。
+
+`terraform apply` 後の output で IAM ユーザー名と Secret 名を確認します。
+
+```bash
+terraform -chdir=infra/terraform output signer_iam_user_name
+terraform -chdir=infra/terraform output presign_secret_name
+```
+
+アクセスキーを手動作成し、Secret に JSON 文字列で保存します。`aws_session_token` は含めないでください。
+
+```bash
+aws iam create-access-key \
+  --user-name "$(terraform -chdir=infra/terraform output -raw signer_iam_user_name)"
+
+aws secretsmanager put-secret-value \
+  --secret-id "$(terraform -chdir=infra/terraform output -raw presign_secret_name)" \
+  --region "${AWS_REGION}" \
+  --secret-string '{"aws_access_key_id":"AKIA...","aws_secret_access_key":"..."}'
+```
+
+ローテーション時は Secret を新しいアクセスキーへ更新し、古いキーはメール内 URL の有効期限が切れてから無効化してください。古いキーを即時無効化すると、そのキーで署名済みの URL も利用できなくなります。
+
+## 6. SES identity
+
+`create_ses_identity = true` かつ `ses_sender_identity` が空でない場合、Terraform は SESv2 identity を作成します。ただし、メールアドレスやドメインの検証完了は手動確認です。SES sandbox 環境では宛先メールアドレスも検証済みである必要があります。本番送信する場合は SES sandbox 解除を申請してください。
+
+既存の検証済み identity を使う場合は `create_ses_identity = false` のままで、`ses_sender_identity` だけ指定してください。
+
+## 7. 手動実行確認
+
+日次分析:
+
+```bash
+make invoke-daily
+cat output-daily.json
+aws logs tail "/aws/lambda/${LAMBDA_FUNCTION_NAME}" --follow --region "${AWS_REGION}"
+```
+
+週次・月次・四半期は前段レポートが S3 に存在する状態で、payload の `analysis_type` を変えて実行します。
+
+## 8. リリース前チェック
+
+```bash
+make test
+make package-function
+make package-layer
+terraform fmt -check -recursive infra/terraform
+terraform -chdir=infra/terraform init -backend=false
+terraform -chdir=infra/terraform validate
+make tf-plan
+git status --short
+```
+
+確認事項:
+
+- `lambda-function.zip`, `lambda-layer.zip`, `.terraform/`, `*.tfstate`, `*.tfvars` が Git の未追跡対象に出ないこと
+- Terraform plan/state に IAM アクセスキー値やメール認証情報が入っていないこと
+- Lambda 環境変数に `S3_BUCKET_NAME` と `TZ` があること
+- EventBridge rule が `daily`, `weekly`, `monthly`, `quarterly` の4種類あること
+- S3 `config/` に `config.json` と4種類のプロンプトがあること
+- CloudWatch Logs に実行ログが出ること
+- CloudFront を有効化している場合、S3 bucket policy の Resource が `public/*` のみであること
+
+## Manual/legacy AWS CLI 手順
+
+以下は Terraform 移行前の手動手順です。標準運用では Makefile + Terraform を使ってください。
 
 ## 1. S3 バケット作成
 
@@ -54,7 +251,7 @@ aws s3 ls "s3://${S3_BUCKET_NAME}/config/"
 `deploy/policies/permissions-policy.json` には以下が含まれます。
 
 - `config/*` の読み取り
-- `responses/*`, `daily/*`, `weekly/*`, `monthly/*`, `quarterly/*` の読み書き
+- `responses/*`, `daily/*`, `weekly/*`, `monthly/*`, `quarterly/*`, `public/*` の読み書き
 - CloudWatch Logs 書き込み
 - Bedrock `InvokeModel`
 - SES `SendEmail`
@@ -397,7 +594,27 @@ aws s3 cp "s3://${S3_BUCKET_NAME}/daily/${TODAY}.html" ./
 aws s3 cp "s3://${S3_BUCKET_NAME}/daily/${TODAY}_articles.txt" ./
 ```
 
-分析結果は `.md` と `.html` の両方を保存します。週次・月次・四半期の入力には `.md` を優先して使い、移行期間の互換用として過去の `.txt` も参照します。四半期分析は `quarterly/FY2026-Q1.md` と `quarterly/FY2026-Q1.html` のように保存します。メール通知の分析結果リンクは閲覧用の `.html` を指します。日次の収集記事一覧は `_articles.txt` のままです。
+分析結果は `.md` と `.html` の両方を保存します。`public_html.enabled` が `true` の場合は、HTML だけを `public/` 配下にも追加保存します。日次の例:
+
+- 既存の保存先: `s3://${S3_BUCKET_NAME}/daily/${TODAY}.html`
+- CloudFront 公開用実体: `s3://${S3_BUCKET_NAME}/public/daily/${TODAY}.html`
+- 公開 URL: `https://<cloudfront-domain>/daily/${TODAY}.html`
+
+既存 HTML を初回公開する場合:
+
+```bash
+make publish-existing-html
+```
+
+CloudFront のキャッシュを明示的に破棄する場合:
+
+```bash
+CLOUDFRONT_DISTRIBUTION_ID="$(terraform -chdir=infra/terraform output -raw cloudfront_distribution_id)" make cf-invalidate
+```
+
+CloudFront は通常の S3 origin + OAC を使います。S3 website endpoint や public bucket policy は使いません。`config/`、Markdown、記事一覧 txt、元の `daily/weekly/monthly/quarterly/` は公開対象外です。公開確認では `https://<cloudfront-domain>/daily/<file>.html` が 200、`https://<cloudfront-domain>/config/config.json` が 403 または 404、S3 直 URL が匿名アクセス不可であることを確認してください。
+
+週次・月次・四半期の入力には `.md` を優先して使い、移行期間の互換用として過去の `.txt` も参照します。四半期分析は `quarterly/FY2026-Q1.md` と `quarterly/FY2026-Q1.html` のように保存します。メール通知の分析結果リンクは従来どおり presigned URL の `.html` を指します。日次の収集記事一覧は `_articles.txt` のままです。
 
 メール通知:
 

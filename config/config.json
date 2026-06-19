@@ -26,6 +26,10 @@
     "monthly": "monthly",
     "quarterly": "quarterly"
   },
+  "public_html": {
+    "enabled": true,
+    "prefix": "public"
+  },
 
   "email_notification": {
     "enabled": true,
