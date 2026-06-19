@@ -1,18 +1,26 @@
-# Bedrock Claude 自動ニュース分析 Lambda
+# Bedrock News Analyzer
 
-AWS Lambda 上で日本の技術ニュースを収集し、Amazon Bedrock の Claude モデルで分析して、結果を S3 に保存するサーバーレスアプリケーションです。日次・週次・月次・四半期の分析に対応し、必要に応じて Amazon SES で分析結果への期限付き S3 URL を通知します。
+AWS Lambda 上で日本の技術ニュースを収集し、Amazon Bedrock の Claude モデルで分析して、結果を S3 に保存するサーバーレスアプリケーションです。日次・週次・月次・四半期の分析に対応し、必要に応じて Amazon SES で CloudFront 公開URLを通知します。
 
 ## アーキテクチャ
 
 ```mermaid
 graph TD
+    Operator(開発者 / 運用者) --> Terraform(Terraform / Makefile)
+    Terraform --> EventBridge(EventBridge Scheduler)
+    Terraform --> Lambda(AWS Lambda)
+    Terraform --> S3Config(S3 config/)
+    Terraform --> S3Policy(S3 bucket policy for CloudFront)
     EventBridge(EventBridge Scheduler) --> Lambda(AWS Lambda)
     Lambda --> S3Config(S3 config/)
     Lambda --> Bedrock(Amazon Bedrock)
-    Lambda --> S3Output(S3 daily/ weekly/ monthly/ quarterly/)
+    Lambda --> S3Output(S3 daily/ weekly/ monthly/ quarterly/ public/)
     Lambda --> SES(Amazon SES)
     Lambda --> CloudWatch(CloudWatch Logs)
     Lambda --> NewsSites(ニュースサイト)
+    SES --> Mail(メール受信者)
+    Mail --> CloudFront(CloudFront)
+    CloudFront --> S3Public(S3 public/)
 ```
 
 1. EventBridge が `analysis_type` を渡して Lambda を定期実行します。
@@ -62,6 +70,8 @@ bedrock-news-analyzer/
 │   └── policies/
 ├── infra/
 │   └── terraform/         # AWS リソース定義
+├── docs/
+│   └── system-architecture.md
 ├── Makefile               # ローカル操作・Terraform実行入口
 ├── LAMBDA_DEPLOYMENT.md    # AWS デプロイ・運用手順
 ├── requirements.txt
@@ -70,7 +80,7 @@ bedrock-news-analyzer/
 
 ## 最短セットアップ
 
-詳細な初回構築、IAM、Secrets Manager、SES、EventBridge、ロールバック、トラブルシューティングは [LAMBDA_DEPLOYMENT.md](./LAMBDA_DEPLOYMENT.md) を参照してください。
+詳細な初回構築、IAM、CloudFront、SES、EventBridge、ロールバック、トラブルシューティングは [LAMBDA_DEPLOYMENT.md](./LAMBDA_DEPLOYMENT.md) を参照してください。
 
 ### 1. ローカル環境
 
@@ -81,7 +91,7 @@ source .venv/bin/activate
 
 ### 2. Terraform 変数
 
-必要に応じて `infra/terraform/terraform.tfvars.example` を `infra/terraform/terraform.tfvars` にコピーし、バケット名、送信元 SES identity、Bedrock モデルを調整します。`*.tfvars` は Git 管理しません。
+必要に応じて `infra/terraform/terraform.tfvars.example` を `infra/terraform/terraform.tfvars` にコピーし、バケット名、送信元 SES identity、Bedrock モデル、CloudFront distribution ARN/domain name を調整します。`*.tfvars` は Git 管理しません。
 
 ```bash
 cp infra/terraform/terraform.tfvars.example infra/terraform/terraform.tfvars
@@ -114,26 +124,13 @@ Terraform は以下を管理します。
 - Lambda 実行ロールとインラインポリシー
 - Lambda Layer version と Lambda 関数
 - EventBridge 4 ルール、ターゲット、Lambda invoke permission
-- Secrets Manager Secret コンテナ
-- 旧 presigned URL 署名用 IAM ユーザーと S3 読み取りポリシー
+- 旧 presigned URL 互換用の Secrets Manager Secret コンテナ
+- 旧 presigned URL 互換用の IAM ユーザーと S3 読み取りポリシー
 - 任意の SES identity 作成
 
-長期アクセスキーは Terraform で作成しません。`aws_iam_access_key` は秘密値を Terraform state に残すため、署名用 IAM ユーザーのアクセスキー作成と Secret への登録は手動で行います。
+旧 presigned URL 互換用リソースは Terraform state との互換のため残していますが、現在のメール通知では使用しません。現行通知に必要なのは、`public_html.base_url` に対応する CloudFront domain name です。
 
-### 5. Secret 登録
-
-`make tf-apply` 後に出力される `signer_iam_user_name` のアクセスキーを AWS CLI またはコンソールで作成し、Secret に JSON で登録します。`aws_session_token` は含めません。
-
-```bash
-aws secretsmanager put-secret-value \
-  --secret-id claude-news-analyzer/s3-presign-user \
-  --region ap-northeast-1 \
-  --secret-string '{"aws_access_key_id":"AKIA...","aws_secret_access_key":"..."}'
-```
-
-新規 Secret に初回値を入れる場合も `put-secret-value` を使えます。アクセスキー値は Terraform 変数や state に入れないでください。
-
-### 6. ローカル実行
+### 5. ローカル実行
 
 AWS 認証情報と S3 バケットを設定したうえで、モックイベントで Lambda 処理を実行できます。
 
@@ -142,7 +139,7 @@ export S3_BUCKET_NAME="your-s3-bucket-name"
 python lambda_handler.py
 ```
 
-### 7. 手動 invoke
+### 6. 手動 invoke
 
 Terraform 適用後、日次処理を手動実行できます。
 
@@ -150,7 +147,7 @@ Terraform 適用後、日次処理を手動実行できます。
 make invoke-daily
 ```
 
-### 8. 手動/legacy デプロイ
+### 7. 手動/legacy デプロイ
 
 `deploy/deploy.sh` は当面残しますが、標準手順は Terraform です。手動で Lambda だけを更新する用途や切り戻し時の参考として利用してください。
 
@@ -182,10 +179,11 @@ CloudFront distribution は Terraform では作成しません。AWS Console で
 
 ## 出力ファイル
 
-分析結果はMarkdown本文の `.md` と、閲覧用の `.html` を同じプレフィックスに保存します。`public_html.enabled` が `true` の場合、HTML だけを `public/` 配下にも追加保存します。例:
+分析結果はMarkdown本文の `.md` と、閲覧用の `.html` を同じプレフィックスに保存します。`public_html.enabled` が `true` の場合、HTML だけを `public/` 配下にも追加保存し、公開HTML一覧の `public/index.html` も再生成します。例:
 
 - 既存の保存先: `s3://claude-news-analyzer/daily/YYYY-MM-DD.html`
 - CloudFront 公開用実体: `s3://claude-news-analyzer/public/daily/YYYY-MM-DD.html`
+- 公開一覧: `s3://claude-news-analyzer/public/index.html`
 - 公開 URL: `https://<cloudfront-domain>/daily/YYYY-MM-DD.html`
 
 CloudFront は S3 website endpoint ではなく通常の S3 origin + OAC を使い、bucket policy は `public/*` の `s3:GetObject` だけを手動作成した CloudFront distribution に許可します。`config/`、Markdown、記事一覧 txt、元の `daily/weekly/monthly/quarterly/` は公開対象外です。既存 HTML を初回公開する場合は `make publish-existing-html` を実行します。
