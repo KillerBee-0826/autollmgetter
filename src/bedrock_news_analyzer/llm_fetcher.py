@@ -6,22 +6,22 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 try:
-    from bedrock_client import BedrockClient
-    from email_dispatcher import send_email_notification
-    from llm_responder import fetch_response as fetch_llm_response
-    from local_runtime import init_local_fetcher
-    from period_calculator import (
+    from .bedrock_client import BedrockClient
+    from .email_dispatcher import send_email_notification
+    from .llm_responder import fetch_response as fetch_llm_response
+    from .local_runtime import init_local_fetcher
+    from .period_calculator import (
         get_now,
         get_previous_month_range,
         get_previous_quarter_range,
         get_previous_week_range,
     )
-    from prompt_builder import (
+    from .prompt_builder import (
         create_news_analysis_prompt,
         create_periodic_analysis_prompt,
     )
-    from report_loader import ReportLoader
-    from report_saver import ReportSaver
+    from .report_loader import ReportLoader
+    from .report_saver import ReportSaver
 except ImportError as e:
     print(f"必要なパッケージがインストールされていません: {e}")
     print("Lambda環境ではboto3が組み込まれています")
@@ -75,7 +75,7 @@ class LLMFetcher:
             raise ValueError(f"未サポートのLLMプロバイダー: {provider}. config.jsonでllm_provider='bedrock'を設定してください")
 
     def __init_local__(self, config_path: str = "config/config.json"):
-        self.script_dir = Path(__file__).parent.absolute()
+        self.script_dir = Path.cwd()
         init_local_fetcher(self, config_path, load_dotenv)
 
     def _resolve_local_path(self, path: str) -> Path:
@@ -113,7 +113,7 @@ class LLMFetcher:
         return fetch_llm_response(self.model, self.config, self.logger, question)
 
     def _analyze_news(self) -> tuple[str, str]:
-        from news_scraper import NewsScraper
+        from .news_scraper import NewsScraper
 
         scraper = NewsScraper(self.config, self.logger)
         articles_by_site = scraper.scrape_all_sites()
@@ -341,7 +341,7 @@ def main():
 if __name__ == "__main__":
     print("=" * 80)
     print("ローカル環境での実行")
-    print("注意: Lambda環境ではlambda_handler.pyを使用してください")
+    print("注意: Lambda環境では bedrock_news_analyzer.lambda_handler を使用してください")
     print("=" * 80)
     print()
     main()

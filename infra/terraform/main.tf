@@ -313,7 +313,7 @@ resource "aws_lambda_function" "analyzer" {
 
   function_name    = var.lambda_function_name
   role             = aws_iam_role.lambda.arn
-  handler          = "lambda_handler.lambda_handler"
+  handler          = "bedrock_news_analyzer.lambda_handler.lambda_handler"
   runtime          = var.lambda_runtime
   timeout          = var.lambda_timeout
   memory_size      = var.lambda_memory_size

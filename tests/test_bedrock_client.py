@@ -6,8 +6,8 @@ from unittest.mock import Mock, patch
 
 from botocore.exceptions import ClientError
 
-import bedrock_client
-from bedrock_client import BedrockClient
+import bedrock_news_analyzer.bedrock_client as bedrock_client
+from bedrock_news_analyzer.bedrock_client import BedrockClient
 
 
 class BedrockClientTests(unittest.TestCase):

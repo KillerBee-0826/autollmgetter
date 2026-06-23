@@ -8,7 +8,7 @@ from html import escape
 from pathlib import Path
 from typing import Callable, List, Optional
 
-from report_html_renderer import render_report_html
+from .report_html_renderer import render_report_html
 
 
 class ReportSaver:

@@ -4,8 +4,8 @@ from unittest.mock import Mock, patch
 
 from botocore.exceptions import ClientError
 
-import s3_handler
-from s3_handler import S3Handler
+import bedrock_news_analyzer.s3_handler as s3_handler
+from bedrock_news_analyzer.s3_handler import S3Handler
 
 
 class S3HandlerSaveTests(unittest.TestCase):

@@ -752,7 +752,7 @@ aws s3 sync "s3://${S3_BUCKET_NAME}/responses/" ./responses/legacy/
 
 ```bash
 export S3_BUCKET_NAME="${S3_BUCKET_NAME}"
-python lambda_handler.py
+PYTHONPATH=src python -m bedrock_news_analyzer.lambda_handler
 ```
 
 ## コスト目安

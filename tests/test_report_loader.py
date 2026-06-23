@@ -6,7 +6,7 @@ from unittest.mock import Mock
 
 from botocore.exceptions import ClientError
 
-from report_loader import ReportLoader
+from bedrock_news_analyzer.report_loader import ReportLoader
 
 
 class ReportLoaderTests(unittest.TestCase):

@@ -50,21 +50,25 @@ graph TD
 
 ```text
 bedrock-news-analyzer/
-├── lambda_handler.py       # Lambda エントリーポイント
-├── llm_fetcher.py          # 分析フロー制御
-├── bedrock_client.py       # Amazon Bedrock クライアント
-├── news_scraper.py         # RSS 取得・本文抽出
-├── report_saver.py         # レポート保存・公開HTML一覧生成
-├── report_loader.py        # 前段レポート読み込み
-├── period_calculator.py    # 週次/月次/四半期の期間計算
-├── prompt_builder.py       # プロンプトテンプレート置換
-├── llm_responder.py        # LLM呼び出しリトライ制御
-├── email_dispatcher.py     # メール通知ディスパッチ
-├── local_runtime.py        # ローカル直接実行の初期化
-├── report_html_renderer.py # 分析結果HTML変換
-├── s3_handler.py           # S3 操作
-├── email_notifier.py       # SES メール通知
-├── cloudwatch_logger.py    # ロガー
+├── src/
+│   └── bedrock_news_analyzer/
+│       ├── lambda_handler.py       # Lambda エントリーポイント
+│       ├── llm_fetcher.py          # 分析フロー制御
+│       ├── bedrock_client.py       # Amazon Bedrock クライアント
+│       ├── news_scraper.py         # RSS 取得・本文抽出
+│       ├── report_saver.py         # レポート保存・公開HTML一覧生成
+│       ├── report_loader.py        # 前段レポート読み込み
+│       ├── period_calculator.py    # 週次/月次/四半期の期間計算
+│       ├── prompt_builder.py       # プロンプトテンプレート置換
+│       ├── llm_responder.py        # LLM呼び出しリトライ制御
+│       ├── email_dispatcher.py     # メール通知ディスパッチ
+│       ├── local_runtime.py        # ローカル直接実行の初期化
+│       ├── report_html_renderer.py # 分析結果HTML変換
+│       ├── s3_handler.py           # S3 操作
+│       ├── email_notifier.py       # SES メール通知
+│       └── cloudwatch_logger.py    # ロガー
+├── tests/
+│   └── test_*.py
 ├── config/
 │   ├── config.json
 │   ├── news_analysis_prompt.txt
@@ -78,16 +82,17 @@ bedrock-news-analyzer/
 ├── infra/
 │   └── terraform/         # AWS リソース定義
 ├── docs/
+│   ├── LAMBDA_DEPLOYMENT.md
+│   ├── refactor-instructions.md
 │   └── system-architecture.md
 ├── Makefile               # ローカル操作・Terraform実行入口
-├── LAMBDA_DEPLOYMENT.md    # AWS デプロイ・運用手順
 ├── requirements.txt
 └── requirements-lambda.txt
 ```
 
 ## 最短セットアップ
 
-詳細な初回構築、IAM、CloudFront、SES、EventBridge、ロールバック、トラブルシューティングは [LAMBDA_DEPLOYMENT.md](./LAMBDA_DEPLOYMENT.md) を参照してください。
+詳細な初回構築、IAM、CloudFront、SES、EventBridge、ロールバック、トラブルシューティングは [docs/LAMBDA_DEPLOYMENT.md](./docs/LAMBDA_DEPLOYMENT.md) を参照してください。
 
 ### 1. ローカル環境
 
@@ -143,7 +148,7 @@ AWS 認証情報と S3 バケットを設定したうえで、モックイベン
 
 ```bash
 export S3_BUCKET_NAME="your-s3-bucket-name"
-python lambda_handler.py
+PYTHONPATH=src python -m bedrock_news_analyzer.lambda_handler
 ```
 
 ### 6. 手動 invoke

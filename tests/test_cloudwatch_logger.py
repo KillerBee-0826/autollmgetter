@@ -1,7 +1,7 @@
 import logging
 import unittest
 
-from cloudwatch_logger import get_logger, setup_cloudwatch_logger, setup_minimal_logger
+from bedrock_news_analyzer.cloudwatch_logger import get_logger, setup_cloudwatch_logger, setup_minimal_logger
 
 
 class CloudWatchLoggerTests(unittest.TestCase):

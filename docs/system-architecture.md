@@ -48,7 +48,7 @@ flowchart LR
 ```mermaid
 sequenceDiagram
   participant EB as EventBridge
-  participant LH as lambda_handler.py
+  participant LH as bedrock_news_analyzer.lambda_handler
   participant S3 as S3
   participant LF as LLMFetcher
   participant NS as NewsScraper
@@ -86,15 +86,15 @@ sequenceDiagram
 | コンポーネント | 管理 | 役割 | 主な根拠 |
 | --- | --- | --- | --- |
 | EventBridge Rules | Terraform | `daily`, `weekly`, `monthly`, `quarterly` の定期起動。イベント本文に `analysis_type` を渡す。 | `infra/terraform/main.tf`, `variables.tf` |
-| AWS Lambda | Terraform | 設定読込、分析種別分岐、ニュース取得、Bedrock 呼び出し、S3 保存、メール通知制御。 | `lambda_handler.py`, `llm_fetcher.py` |
+| AWS Lambda | Terraform | 設定読込、分析種別分岐、ニュース取得、Bedrock 呼び出し、S3 保存、メール通知制御。 | `src/bedrock_news_analyzer/lambda_handler.py`, `src/bedrock_news_analyzer/llm_fetcher.py` |
 | Lambda Layer | Terraform + Docker | Lambda 実行時依存パッケージを提供。 | `deploy/build_layer.sh`, `deploy/Dockerfile.layer` |
 | S3 reports bucket | Terraform | config、prompt、生成レポート、公開HTML実体を保存。公開アクセスブロックと SSE-S3 を有効化。 | `infra/terraform/main.tf`, `s3_handler.py` |
 | Amazon Bedrock Runtime | AWS managed | Claude による日次分析・期間集約。Bedrock 実行リージョンは config 上 `us-east-1`。 | `bedrock_client.py`, `config/config.json` |
 | 技術ニュースサイト | 外部 | RSS と記事本文の取得元。 | `news_scraper.py`, `config/config.json` |
-| CloudFront | 手動作成 + Terraform bucket policy | `public/` 配下だけを OAC で配信。distribution 本体は Terraform 管理外。 | `infra/terraform/main.tf`, `LAMBDA_DEPLOYMENT.md` |
+| CloudFront | 手動作成 + Terraform bucket policy | `public/` 配下だけを OAC で配信。distribution 本体は Terraform 管理外。 | `infra/terraform/main.tf`, `docs/LAMBDA_DEPLOYMENT.md` |
 | Amazon SES v2 | Terraform optional + AWS managed | 分析完了メールを送信。本文リンクは CloudFront URL。 | `email_notifier.py`, `config/config.json` |
 | CloudWatch Logs | Terraform / Lambda | Lambda 実行ログの保管。 | `cloudwatch_logger.py`, `infra/terraform/main.tf` |
-| Legacy presigned URL resources | Terraform | 旧通知方式用の IAM user / Secrets Manager secret。現行 `email_notifier.py` は使用しない。 | `infra/terraform/main.tf`, `LAMBDA_DEPLOYMENT.md` |
+| Legacy presigned URL resources | Terraform | 旧通知方式用の IAM user / Secrets Manager secret。現行 `email_notifier.py` は使用しない。 | `infra/terraform/main.tf`, `docs/LAMBDA_DEPLOYMENT.md` |
 
 ## S3 オブジェクト設計
 
@@ -183,10 +183,10 @@ Terraform が管理しないもの:
 
 | 障害 | 影響 | 主な確認先 |
 | --- | --- | --- |
-| S3 config / prompt 読込失敗 | 全分析が開始できない。 | `lambda_handler.py`, CloudWatch Logs, S3 `config/` |
+| S3 config / prompt 読込失敗 | 全分析が開始できない。 | `src/bedrock_news_analyzer/lambda_handler.py`, CloudWatch Logs, S3 `config/` |
 | ニュース取得失敗 | daily の入力記事が不足または空になる。 | `news_scraper.py`, CloudWatch Logs |
 | Bedrock 呼び出し失敗 | 対象分析のレポート生成が失敗する。 | `bedrock_client.py`, Bedrock region/model設定 |
-| 前段レポート不足 | weekly/monthly/quarterly が入力不足で失敗または警告する。 | S3 `daily/weekly/monthly/`, `llm_fetcher.py` |
+| 前段レポート不足 | weekly/monthly/quarterly が入力不足で失敗または警告する。 | S3 `daily/weekly/monthly/`, `src/bedrock_news_analyzer/llm_fetcher.py` |
 | `public_html.base_url` 未設定 | メール通知が失敗する。`fail_on_send_error=false` なら分析自体は成功扱い。 | S3 `config/config.json`, Terraform `public_html_cloudfront_domain_name` |
 | CloudFront / OAC / bucket policy 不整合 | メールリンク先の公開HTMLが 403/404 になる。 | CloudFront設定, S3 bucket policy, `public/` object |
 | SES 設定不備 | メール通知が送信されない。 | SES identity/sandbox, `email_notification.*`, CloudWatch Logs |
@@ -195,25 +195,25 @@ Terraform が管理しないもの:
 
 | Path | 役割 |
 | --- | --- |
-| `lambda_handler.py` | Lambda entrypoint。S3 config/prompt 読込、分析種別検証、`LLMFetcher` 起動。 |
-| `llm_fetcher.py` | 分析種別ごとのフロー制御と既存公開API互換の委譲メソッド。 |
-| `news_scraper.py` | RSS/HTML取得、本文抽出、LLM入力整形。 |
-| `bedrock_client.py` | Bedrock Runtime `invoke_model` 呼び出し。 |
-| `llm_responder.py` | LLM呼び出しのリトライとトークン使用量ログ。 |
-| `prompt_builder.py` | 日次・定期分析プロンプトのテンプレート置換。 |
-| `period_calculator.py` | 週次・月次・4月始まり会計年度の四半期計算。 |
-| `report_loader.py` | 前段レポート読み込み。`.md` 優先、`.txt` と旧 `responses/` fallback を保持。 |
-| `report_saver.py` | `.md`/`.html` 保存、記事一覧保存、公開HTMLコピー、`public/index.html` 再生成。 |
-| `report_html_renderer.py` | Markdown風レポート本文を単体HTMLへ変換。 |
-| `s3_handler.py` | S3 get/put/head/list の薄いラッパー。 |
-| `email_dispatcher.py` | 分析完了通知の有効判定と `EmailNotifier` 起動。 |
-| `email_notifier.py` | SES メール本文生成と送信。CloudFront URLのみを作る。 |
-| `local_runtime.py` | `python llm_fetcher.py` 用の設定・プロンプト・ロガー初期化。 |
+| `src/bedrock_news_analyzer/lambda_handler.py` | Lambda entrypoint。S3 config/prompt 読込、分析種別検証、`LLMFetcher` 起動。 |
+| `src/bedrock_news_analyzer/llm_fetcher.py` | 分析種別ごとのフロー制御と既存公開API互換の委譲メソッド。 |
+| `src/bedrock_news_analyzer/news_scraper.py` | RSS/HTML取得、本文抽出、LLM入力整形。 |
+| `src/bedrock_news_analyzer/bedrock_client.py` | Bedrock Runtime `invoke_model` 呼び出し。 |
+| `src/bedrock_news_analyzer/llm_responder.py` | LLM呼び出しのリトライとトークン使用量ログ。 |
+| `src/bedrock_news_analyzer/prompt_builder.py` | 日次・定期分析プロンプトのテンプレート置換。 |
+| `src/bedrock_news_analyzer/period_calculator.py` | 週次・月次・4月始まり会計年度の四半期計算。 |
+| `src/bedrock_news_analyzer/report_loader.py` | 前段レポート読み込み。`.md` 優先、`.txt` と旧 `responses/` fallback を保持。 |
+| `src/bedrock_news_analyzer/report_saver.py` | `.md`/`.html` 保存、記事一覧保存、公開HTMLコピー、`public/index.html` 再生成。 |
+| `src/bedrock_news_analyzer/report_html_renderer.py` | Markdown風レポート本文を単体HTMLへ変換。 |
+| `src/bedrock_news_analyzer/s3_handler.py` | S3 get/put/head/list の薄いラッパー。 |
+| `src/bedrock_news_analyzer/email_dispatcher.py` | 分析完了通知の有効判定と `EmailNotifier` 起動。 |
+| `src/bedrock_news_analyzer/email_notifier.py` | SES メール本文生成と送信。CloudFront URLのみを作る。 |
+| `src/bedrock_news_analyzer/local_runtime.py` | `PYTHONPATH=src python -m bedrock_news_analyzer.llm_fetcher` 用の設定・プロンプト・ロガー初期化。 |
 | `infra/terraform/` | AWS リソース定義と S3 config レンダリング。 |
 | `deploy/` | Terraform 移行前の legacy/manual デプロイ補助と Layer build。 |
 | `Makefile` | setup/test/package/Terraform/CloudFront invalidation の入口。 |
 
-`LLMFetcher` の Lambda 用初期化シグネチャは `LLMFetcher(config, prompt_template, s3_handler, logger)` です。`config` と `prompt_template` は `lambda_handler.py` が S3 から読み込み済みの値を渡し、ローカル直接実行時だけ `llm_fetcher.py` の `__init_local__()` がリポジトリ内の `config/config.json` とプロンプトファイルを読み込みます。
+`LLMFetcher` の Lambda 用初期化シグネチャは `LLMFetcher(config, prompt_template, s3_handler, logger)` です。`config` と `prompt_template` は `bedrock_news_analyzer.lambda_handler` が S3 から読み込み済みの値を渡し、ローカル直接実行時だけ `bedrock_news_analyzer.llm_fetcher` の `__init_local__()` がリポジトリ内の `config/config.json` とプロンプトファイルを読み込みます。
 
 ## 現在の制約と前提
 

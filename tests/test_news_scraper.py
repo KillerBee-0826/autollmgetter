@@ -78,8 +78,8 @@ if "bs4" not in sys.modules:
     bs4_stub.BeautifulSoup = BeautifulSoup
     sys.modules["bs4"] = bs4_stub
 
-import news_scraper
-from news_scraper import NewsScraper
+import bedrock_news_analyzer.news_scraper as news_scraper
+from bedrock_news_analyzer.news_scraper import NewsScraper
 
 
 class NewsScraperTests(unittest.TestCase):

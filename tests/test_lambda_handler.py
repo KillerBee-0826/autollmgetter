@@ -33,7 +33,7 @@ if "pytz" not in sys.modules:
     pytz_stub.timezone = Mock(return_value=timezone.utc)
     sys.modules["pytz"] = pytz_stub
 
-import lambda_handler
+import bedrock_news_analyzer.lambda_handler as lambda_handler
 
 
 class LambdaHandlerErrorResponseTests(unittest.TestCase):

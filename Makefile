@@ -7,23 +7,7 @@ TF_DIR ?= infra/terraform
 CLOUDFRONT_DISTRIBUTION_ID ?=
 PUBLIC_HTML_PREFIX ?= public
 PATHS ?= /*
-
-FUNCTION_SOURCES = \
-	lambda_handler.py \
-	s3_handler.py \
-	cloudwatch_logger.py \
-	email_dispatcher.py \
-	llm_responder.py \
-	llm_fetcher.py \
-	local_runtime.py \
-	period_calculator.py \
-	prompt_builder.py \
-	report_loader.py \
-	report_saver.py \
-	report_html_renderer.py \
-	bedrock_client.py \
-	news_scraper.py \
-	email_notifier.py
+FUNCTION_BUILD_DIR ?= .lambda-build/function
 
 .PHONY: setup test package-function package-layer tf-init tf-plan tf-apply tf-fmt tf-validate upload-config publish-existing-html cf-invalidate invoke-daily clean-build
 
@@ -32,11 +16,15 @@ setup:
 	$(VENV)/bin/pip install -r requirements.txt
 
 test:
-	$(PYTHON) -m unittest discover -v
+	PYTHONPATH=src $(PYTHON) -m unittest discover -s tests -v
 
 package-function:
 	rm -f lambda-function.zip
-	zip -r lambda-function.zip $(FUNCTION_SOURCES) -q
+	rm -rf $(FUNCTION_BUILD_DIR)
+	mkdir -p $(FUNCTION_BUILD_DIR)
+	cp -R src/bedrock_news_analyzer $(FUNCTION_BUILD_DIR)/bedrock_news_analyzer
+	find $(FUNCTION_BUILD_DIR) -type d -name __pycache__ -prune -exec rm -rf {} +
+	cd $(FUNCTION_BUILD_DIR) && zip -r ../../lambda-function.zip bedrock_news_analyzer -q
 	ls -lh lambda-function.zip
 
 package-layer:
@@ -87,4 +75,4 @@ invoke-daily:
 
 clean-build:
 	rm -f lambda-function.zip lambda-layer.zip output*.json
-	rm -rf layer
+	rm -rf layer .lambda-build

@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-from report_saver import ReportSaver
+from bedrock_news_analyzer.report_saver import ReportSaver
 
 
 class ReportSaverTests(unittest.TestCase):

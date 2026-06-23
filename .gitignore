@@ -8,6 +8,7 @@ __pycache__/
 *.so
 .Python
 venv/
+.venv/
 ENV/
 env/
 
@@ -29,6 +30,7 @@ Thumbs.db
 lambda-function.zip
 lambda-layer.zip
 layer/
+.lambda-build/
 output*.json
 
 # Terraform
@@ -39,6 +41,3 @@ output*.json
 
 # User-generated data
 responses/
-
-# refactor instructions
-refactor-instructions.md

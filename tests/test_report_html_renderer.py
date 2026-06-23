@@ -1,7 +1,7 @@
 import unittest
 from html import escape
 
-from report_html_renderer import render_report_html
+from bedrock_news_analyzer.report_html_renderer import render_report_html
 
 
 class ReportHtmlRendererTests(unittest.TestCase):

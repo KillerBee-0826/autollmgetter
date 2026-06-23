@@ -9,9 +9,9 @@ import json
 import traceback
 from typing import Dict, Any
 
-from s3_handler import S3Handler
-from cloudwatch_logger import setup_cloudwatch_logger
-from llm_fetcher import LLMFetcher
+from .s3_handler import S3Handler
+from .cloudwatch_logger import setup_cloudwatch_logger
+from .llm_fetcher import LLMFetcher
 
 
 def _get_analysis_type(event: Dict[str, Any]) -> str:

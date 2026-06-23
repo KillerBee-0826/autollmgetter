@@ -2,7 +2,7 @@ import unittest
 from datetime import date, datetime
 from unittest.mock import Mock, patch
 
-import period_calculator
+import bedrock_news_analyzer.period_calculator as period_calculator
 
 
 class PeriodCalculatorTests(unittest.TestCase):

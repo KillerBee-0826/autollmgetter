@@ -4,7 +4,7 @@ from datetime import date, datetime
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-from llm_fetcher import LLMFetcher
+from bedrock_news_analyzer.llm_fetcher import LLMFetcher
 
 
 class LLMFetcherHtmlOutputTests(unittest.TestCase):

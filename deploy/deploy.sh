@@ -8,7 +8,7 @@ set -e
 FUNCTION_NAME="${LAMBDA_FUNCTION_NAME:-claude-news-analyzer}"
 LAYER_NAME="${LAMBDA_LAYER_NAME:-claude-news-analyzer-dependencies}"
 RUNTIME="python3.11"
-HANDLER="lambda_handler.lambda_handler"
+HANDLER="bedrock_news_analyzer.lambda_handler.lambda_handler"
 TIMEOUT=900  # 15分
 MEMORY=1536  # 1.5GB
 REGION="${AWS_REGION:-ap-northeast-1}"
@@ -61,26 +61,14 @@ echo ""
 echo "=== Lambda関数パッケージ作成 ==="
 # 既存のzipファイルを削除
 rm -f lambda-function.zip
+rm -rf .lambda-build/function
 
 # 関数コードをzip化
 echo "Lambda関数コードをパッケージング中..."
-zip -r lambda-function.zip \
-  lambda_handler.py \
-  s3_handler.py \
-  cloudwatch_logger.py \
-  email_dispatcher.py \
-  llm_responder.py \
-  llm_fetcher.py \
-  local_runtime.py \
-  period_calculator.py \
-  prompt_builder.py \
-  report_loader.py \
-  report_saver.py \
-  report_html_renderer.py \
-  bedrock_client.py \
-  news_scraper.py \
-  email_notifier.py \
-  -q
+mkdir -p .lambda-build/function
+cp -R src/bedrock_news_analyzer .lambda-build/function/bedrock_news_analyzer
+find .lambda-build/function -type d -name __pycache__ -prune -exec rm -rf {} +
+(cd .lambda-build/function && zip -r ../../lambda-function.zip bedrock_news_analyzer -q)
 
 function_size=$(du -h lambda-function.zip | cut -f1)
 echo "✓ Lambda関数パッケージ作成完了: lambda-function.zip ($function_size)"
@@ -208,5 +196,5 @@ echo "       --targets file:///tmp/claude-news-analyzer-daily-target.json \\"
 echo "       --region ${REGION}"
 echo ""
 echo "     週次・月次・四半期も同じ file JSON 方式で targets ファイルを作成してください。"
-echo "     詳細は LAMBDA_DEPLOYMENT.md の EventBridge スケジュール手順を参照してください。"
+echo "     詳細は docs/LAMBDA_DEPLOYMENT.md の EventBridge スケジュール手順を参照してください。"
 echo "     shorthand 形式はシェル引用や JSON エスケープで失敗しやすいため避けます。"

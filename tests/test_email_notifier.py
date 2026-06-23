@@ -3,8 +3,8 @@ from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-import email_notifier
-from email_notifier import EmailNotifier
+import bedrock_news_analyzer.email_notifier as email_notifier
+from bedrock_news_analyzer.email_notifier import EmailNotifier
 
 
 class FakeBoto3:

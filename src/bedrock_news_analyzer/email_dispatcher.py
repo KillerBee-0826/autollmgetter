@@ -33,7 +33,7 @@ def send_email_notification(
         return
 
     try:
-        from email_notifier import EmailNotifier
+        from .email_notifier import EmailNotifier
 
         notifier_config = dict(email_config)
         notifier_config["public_html"] = config.get("public_html", {})
