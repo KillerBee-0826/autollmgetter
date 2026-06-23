@@ -13,6 +13,7 @@ FUNCTION_SOURCES = \
 	s3_handler.py \
 	cloudwatch_logger.py \
 	llm_fetcher.py \
+	period_calculator.py \
 	report_saver.py \
 	report_html_renderer.py \
 	bedrock_client.py \

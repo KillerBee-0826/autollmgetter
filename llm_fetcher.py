@@ -14,9 +14,14 @@ from typing import Dict, List, Optional
 
 try:
     import boto3
-    import pytz
     from bedrock_client import BedrockClient
     from botocore.exceptions import ClientError
+    from period_calculator import (
+        get_now,
+        get_previous_month_range,
+        get_previous_quarter_range,
+        get_previous_week_range,
+    )
     from report_saver import ReportSaver
 except ImportError as e:
     print(f"必要なパッケージがインストールされていません: {e}")
@@ -332,52 +337,19 @@ class LLMFetcher:
 
     def _get_now(self) -> datetime:
         """設定されたタイムゾーンの現在時刻を取得する"""
-        timezone_name = self.config.get("news_scraping", {}).get("timezone", "Asia/Tokyo")
-        tz = pytz.timezone(timezone_name)
-        return datetime.now(tz)
+        return get_now(self.config)
 
     def _get_previous_week_range(self) -> tuple:
         """直前の日曜から土曜までの記事日付範囲を取得する"""
-        today = self._get_now().date()
-        days_since_sunday = (today.weekday() + 1) % 7
-        current_week_sunday = today - timedelta(days=days_since_sunday)
-        period_start = current_week_sunday - timedelta(days=7)
-        period_end = current_week_sunday - timedelta(days=1)
-        return period_start, period_end
+        return get_previous_week_range(self._get_now())
 
     def _get_previous_month_range(self) -> tuple:
         """前月の開始日と終了日を取得する"""
-        today = self._get_now().date()
-        current_month_start = today.replace(day=1)
-        previous_month_end = current_month_start - timedelta(days=1)
-        previous_month_start = previous_month_end.replace(day=1)
-        return previous_month_start, previous_month_end
+        return get_previous_month_range(self._get_now())
 
     def _get_previous_quarter_range(self) -> tuple:
         """4月始まりの会計年度で直前四半期のラベルと日付範囲を取得する"""
-        today = self._get_now().date()
-        current_quarter_start_month = ((today.month - 4) % 12) // 3 * 3 + 4
-        current_quarter_year = today.year
-        if current_quarter_start_month > 12:
-            current_quarter_start_month -= 12
-
-        current_quarter_start = today.replace(
-            year=current_quarter_year,
-            month=current_quarter_start_month,
-            day=1
-        )
-        period_end = current_quarter_start - timedelta(days=1)
-        period_start_month = period_end.month - 2
-        period_start_year = period_end.year
-        if period_start_month <= 0:
-            period_start_month += 12
-            period_start_year -= 1
-        period_start = period_end.replace(year=period_start_year, month=period_start_month, day=1)
-
-        fiscal_year = period_start.year if period_start.month >= 4 else period_start.year - 1
-        quarter = ((period_start.month - 4) % 12) // 3 + 1
-        quarter_label = f"FY{fiscal_year}-Q{quarter}"
-        return quarter_label, period_start, period_end
+        return get_previous_quarter_range(self._get_now())
 
     def _load_text_if_exists(self, key: str) -> Optional[str]:
         """存在するS3テキストを読み込む。存在しなければNoneを返す"""
