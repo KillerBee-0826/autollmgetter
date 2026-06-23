@@ -4,7 +4,6 @@ LLM統合スクリプト
 AWS Lambda環境とローカル環境で動作し、Amazon Bedrock (Claude)を使用してニュース分析を実行します。
 """
 
-import os
 import sys
 import json
 import time
@@ -50,12 +49,14 @@ class LLMFetcher:
         self.s3_handler = s3_handler
         self.logger = logger
 
-        # プロバイダーを決定（bedrock）
+        self._init_bedrock_client()
+
+    def _init_bedrock_client(self) -> None:
+        """設定に基づいてBedrockクライアントを初期化する"""
         provider = self.config.get("llm_provider", "bedrock")
         self.logger.info(f"LLMプロバイダー: {provider}")
 
         if provider == "bedrock":
-            # Amazon Bedrock (Claude) を使用
             model_id = self.config.get("bedrock_model", "us.anthropic.claude-sonnet-4-5-v2:0")
             region = self.config.get("bedrock_region", "us-east-1")
             max_tokens = self.config.get("bedrock_max_tokens", 4096)
@@ -86,9 +87,7 @@ class LLMFetcher:
         Args:
             config_path: 設定ファイルのパス
         """
-        # プロジェクトルートディレクトリに移動
         self.script_dir = Path(__file__).parent.absolute()
-        os.chdir(self.script_dir)
 
         # 環境変数の読み込み
         if load_dotenv:
@@ -100,34 +99,7 @@ class LLMFetcher:
         # ログの設定
         self._setup_logging()
 
-        # プロバイダーを決定
-        provider = self.config.get("llm_provider", "bedrock")
-        self.logger.info(f"LLMプロバイダー: {provider}")
-
-        if provider == "bedrock":
-            # Amazon Bedrock (Claude) を使用
-            model_id = self.config.get("bedrock_model", "us.anthropic.claude-sonnet-4-5-v2:0")
-            region = self.config.get("bedrock_region", "us-east-1")
-            max_tokens = self.config.get("bedrock_max_tokens", 4096)
-            read_timeout = self.config.get("bedrock_read_timeout", 600)
-            connect_timeout = self.config.get("bedrock_connect_timeout", 10)
-            retry_max_attempts = self.config.get("bedrock_retry_max_attempts", 0)
-
-            self.model = BedrockClient(
-                model_id=model_id,
-                region=region,
-                logger=self.logger,
-                max_tokens=max_tokens,
-                read_timeout=read_timeout,
-                connect_timeout=connect_timeout,
-                retry_max_attempts=retry_max_attempts
-            )
-            self.logger.info(f"Bedrockクライアント初期化完了: {model_id}")
-
-        else:
-            self.logger.error(f"未サポートのLLMプロバイダー: {provider}")
-            self.logger.error("現在はBedrock (Claude)のみサポートしています")
-            raise ValueError(f"未サポートのLLMプロバイダー: {provider}. config.jsonでllm_provider='bedrock'を設定してください")
+        self._init_bedrock_client()
 
         # プロンプトテンプレートの読み込み
         prompt_path = self.config.get("news_analysis_prompt_path", "config/news_analysis_prompt.txt")
@@ -137,6 +109,14 @@ class LLMFetcher:
         self.s3_handler = None
 
         self.logger.info("LLMFetcherを初期化しました（ローカルモード）")
+
+    def _resolve_local_path(self, path: str) -> Path:
+        """ローカル実行時の相対パスをプロジェクトルート基準で解決する"""
+        resolved_path = Path(path)
+        if resolved_path.is_absolute():
+            return resolved_path
+        script_dir = getattr(self, "script_dir", Path(__file__).parent.absolute())
+        return script_dir / resolved_path
 
     def _load_config(self, config_path: str) -> dict:
         """
@@ -149,7 +129,8 @@ class LLMFetcher:
             設定の辞書
         """
         try:
-            with open(config_path, "r", encoding="utf-8") as f:
+            config_file = self._resolve_local_path(config_path)
+            with open(config_file, "r", encoding="utf-8") as f:
                 config = json.load(f)
             return config
         except FileNotFoundError:
@@ -171,7 +152,7 @@ class LLMFetcher:
         """
         try:
             if not Path(template_path).is_absolute():
-                template_path = self.script_dir / template_path
+                template_path = self._resolve_local_path(template_path)
 
             with open(template_path, "r", encoding="utf-8") as f:
                 template = f.read()
@@ -200,7 +181,7 @@ class LLMFetcher:
 
     def _setup_logging(self):
         """ログの設定"""
-        logs_dir = Path(self.config["logs_dir"])
+        logs_dir = self._resolve_local_path(self.config["logs_dir"])
         logs_dir.mkdir(exist_ok=True)
 
         log_file = logs_dir / "news_analyzer.log"
@@ -332,7 +313,7 @@ class LLMFetcher:
 
             # ローカル環境（ファイルシステム使用）
             else:
-                responses_dir = Path(self.config["responses_dir"]) / self._get_output_prefix("daily")
+                responses_dir = self._resolve_local_path(self.config["responses_dir"]) / self._get_output_prefix("daily")
                 responses_dir.mkdir(parents=True, exist_ok=True)
                 output_file = responses_dir / f"{date_str}_articles.txt"
 
@@ -697,8 +678,7 @@ class LLMFetcher:
         except KeyError as e:
             self.logger.error(f"プロンプトテンプレートの変数置換エラー: {e}")
             self.logger.error("テンプレートに {formatted_articles} プレースホルダーが必要です")
-            print("エラー: プロンプトテンプレートの形式が不正です")
-            sys.exit(1)
+            raise ValueError(f"プロンプトテンプレートに必要なプレースホルダーがありません: {e}")
 
     def _create_periodic_analysis_prompt(self, **kwargs) -> str:
         """
@@ -772,7 +752,7 @@ class LLMFetcher:
 
             # ローカル環境（ファイルシステム使用）
             else:
-                responses_dir = Path(self.config["responses_dir"]) / self._get_output_prefix("daily")
+                responses_dir = self._resolve_local_path(self.config["responses_dir"]) / self._get_output_prefix("daily")
                 responses_dir.mkdir(parents=True, exist_ok=True)
                 output_file = responses_dir / f"{date_str}.md"
 
@@ -829,7 +809,7 @@ class LLMFetcher:
             self._save_public_html_copy(html_key, html_content)
             return html_key
 
-        responses_dir = Path(self.config["responses_dir"]) / prefix
+        responses_dir = self._resolve_local_path(self.config["responses_dir"]) / prefix
         responses_dir.mkdir(parents=True, exist_ok=True)
         output_file = responses_dir / f"{output_name}.md"
         with open(output_file, "w", encoding="utf-8") as f:
@@ -857,13 +837,6 @@ class LLMFetcher:
             artifacts["analysis"].append(analysis_key)
         else:
             self.logger.warning("ニュース分析が無効化されています（config.news_scraping.enabled = false）")
-
-        # 既存の質問処理（オプション）
-        question = self.config.get("question", "")
-        if question and question != "ここに毎日Claudeに投げたい質問を入力してください" and question.strip():
-            self.logger.info(f"追加質問を処理: {question[:50]}...")
-            response = self.fetch_response(question)
-            self.save_response(response, section="question")
 
         return artifacts
 
