@@ -1,25 +1,24 @@
 #!/usr/bin/env python3
-"""
-LLM統合スクリプト
-AWS Lambda環境とローカル環境で動作し、Amazon Bedrock (Claude)を使用してニュース分析を実行します。
-"""
-
 import sys
-import json
-import time
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional
 
 try:
-    import boto3
     from bedrock_client import BedrockClient
+    from email_dispatcher import send_email_notification
+    from llm_responder import fetch_response as fetch_llm_response
+    from local_runtime import init_local_fetcher
     from period_calculator import (
         get_now,
         get_previous_month_range,
         get_previous_quarter_range,
         get_previous_week_range,
+    )
+    from prompt_builder import (
+        create_news_analysis_prompt,
+        create_periodic_analysis_prompt,
     )
     from report_loader import ReportLoader
     from report_saver import ReportSaver
@@ -36,18 +35,7 @@ except ImportError:
 
 
 class LLMFetcher:
-    """LLM (Bedrock) を使用して質問の回答を取得するクラス（Lambda対応版）"""
-
     def __init__(self, config: dict, prompt_template: str, s3_handler, logger: logging.Logger):
-        """
-        Lambda用初期化（設定をパラメータで受け取る）
-
-        Args:
-            config: 設定辞書（S3から読み込み済み）
-            prompt_template: プロンプトテンプレート文字列（S3から読み込み済み）
-            s3_handler: S3操作ヘルパー（S3Handlerインスタンス）
-            logger: ロガーインスタンス（CloudWatch Logs用）
-        """
         self.config = config
         self.prompt_template = prompt_template
         self.s3_handler = s3_handler
@@ -87,39 +75,10 @@ class LLMFetcher:
             raise ValueError(f"未サポートのLLMプロバイダー: {provider}. config.jsonでllm_provider='bedrock'を設定してください")
 
     def __init_local__(self, config_path: str = "config/config.json"):
-        """
-        ローカル環境用初期化（互換性のため残す）
-
-        Args:
-            config_path: 設定ファイルのパス
-        """
         self.script_dir = Path(__file__).parent.absolute()
-
-        # 環境変数の読み込み
-        if load_dotenv:
-            load_dotenv()
-
-        # 設定ファイルの読み込み
-        self.config = self._load_config(config_path)
-
-        # ログの設定
-        self._setup_logging()
-
-        self._init_bedrock_client()
-
-        # プロンプトテンプレートの読み込み
-        prompt_path = self.config.get("news_analysis_prompt_path", "config/news_analysis_prompt.txt")
-        self.prompt_template = self._load_prompt_template(prompt_path)
-
-        # S3Handlerはローカル環境では不使用
-        self.s3_handler = None
-        self.report_loader = self._create_report_loader()
-        self.report_saver = self._create_report_saver()
-
-        self.logger.info("LLMFetcherを初期化しました（ローカルモード）")
+        init_local_fetcher(self, config_path, load_dotenv)
 
     def _resolve_local_path(self, path: str) -> Path:
-        """ローカル実行時の相対パスをプロジェクトルート基準で解決する"""
         resolved_path = Path(path)
         if resolved_path.is_absolute():
             return resolved_path
@@ -127,7 +86,6 @@ class LLMFetcher:
         return script_dir / resolved_path
 
     def _create_report_saver(self) -> ReportSaver:
-        """現在の状態に基づくReportSaverを生成する"""
         return ReportSaver(
             config=self.config,
             s3_handler=self.s3_handler,
@@ -137,12 +95,10 @@ class LLMFetcher:
         )
 
     def _get_report_saver(self) -> ReportSaver:
-        """テストで差し替えられた属性も反映したReportSaverを取得する"""
         self.report_saver = self._create_report_saver()
         return self.report_saver
 
     def _create_report_loader(self) -> ReportLoader:
-        """現在の状態に基づくReportLoaderを生成する"""
         return ReportLoader(
             config=self.config,
             s3_handler=self.s3_handler,
@@ -150,273 +106,72 @@ class LLMFetcher:
         )
 
     def _get_report_loader(self) -> ReportLoader:
-        """テストで差し替えられた属性も反映したReportLoaderを取得する"""
         self.report_loader = self._create_report_loader()
         return self.report_loader
 
-    def _load_config(self, config_path: str) -> dict:
-        """
-        設定ファイルを読み込む
-
-        Args:
-            config_path: 設定ファイルのパス
-
-        Returns:
-            設定の辞書
-        """
-        try:
-            config_file = self._resolve_local_path(config_path)
-            with open(config_file, "r", encoding="utf-8") as f:
-                config = json.load(f)
-            return config
-        except FileNotFoundError:
-            print(f"設定ファイルが見つかりません: {config_path}")
-            sys.exit(1)
-        except json.JSONDecodeError as e:
-            print(f"設定ファイルのJSON形式が不正です: {e}")
-            sys.exit(1)
-
-    def _load_prompt_template(self, template_path: str) -> str:
-        """
-        プロンプトテンプレートファイルを読み込む
-
-        Args:
-            template_path: プロンプトテンプレートファイルのパス（相対パスまたは絶対パス）
-
-        Returns:
-            プロンプトテンプレート文字列
-        """
-        try:
-            if not Path(template_path).is_absolute():
-                template_path = self._resolve_local_path(template_path)
-
-            with open(template_path, "r", encoding="utf-8") as f:
-                template = f.read()
-
-            if not template.strip():
-                self.logger.error(f"プロンプトテンプレートファイルが空です: {template_path}")
-                print(f"エラー: プロンプトテンプレートファイルが空です: {template_path}")
-                sys.exit(1)
-
-            self.logger.info(f"プロンプトテンプレートを読み込みました: {template_path}")
-            return template
-
-        except FileNotFoundError:
-            self.logger.error(f"プロンプトテンプレートファイルが見つかりません: {template_path}")
-            print(f"エラー: プロンプトテンプレートファイルが見つかりません: {template_path}")
-            print(f"news_analysis_prompt.txt ファイルをプロジェクトルート ({self.script_dir}) に配置してください")
-            sys.exit(1)
-        except UnicodeDecodeError as e:
-            self.logger.error(f"プロンプトテンプレートファイルのエンコーディングエラー: {e}")
-            print(f"エラー: プロンプトテンプレートファイルはUTF-8エンコーディングで保存してください")
-            sys.exit(1)
-        except Exception as e:
-            self.logger.error(f"プロンプトテンプレートの読み込みに失敗しました: {str(e)}")
-            print(f"エラー: プロンプトテンプレートの読み込みに失敗しました: {str(e)}")
-            sys.exit(1)
-
-    def _setup_logging(self):
-        """ログの設定"""
-        logs_dir = self._resolve_local_path(self.config["logs_dir"])
-        logs_dir.mkdir(exist_ok=True)
-
-        log_file = logs_dir / "news_analyzer.log"
-
-        # ロガーの設定
-        self.logger = logging.getLogger("NewsAnalyzer")
-        self.logger.setLevel(logging.INFO)
-
-        # ファイルハンドラ
-        file_handler = logging.FileHandler(log_file, encoding="utf-8")
-        file_handler.setLevel(logging.INFO)
-
-        # コンソールハンドラ
-        console_handler = logging.StreamHandler()
-        console_handler.setLevel(logging.INFO)
-
-        # フォーマッター
-        formatter = logging.Formatter(
-            "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-        )
-        file_handler.setFormatter(formatter)
-        console_handler.setFormatter(formatter)
-
-        self.logger.addHandler(file_handler)
-        self.logger.addHandler(console_handler)
-
     def fetch_response(self, question: str) -> str:
-        """
-        LLM (Bedrock) に質問を送信し、回答を取得する（リトライ機能付き）
-
-        Args:
-            question: LLMに送信する質問
-
-        Returns:
-            LLMからの回答テキスト
-
-        Raises:
-            Exception: 最大リトライ回数を超えても失敗した場合
-        """
-        max_retries = self.config["max_retries"]
-        retry_delay = self.config["retry_delay"]
-
-        for attempt in range(max_retries):
-            try:
-                self.logger.info(f"質問を送信中 (試行 {attempt + 1}/{max_retries})")
-
-                # generate_content()はBedrock対応
-                response_text = self.model.generate_content(question)
-
-                if not response_text:
-                    raise ValueError("LLMからの回答が空です")
-
-                self.logger.info(
-                    f"回答を取得しました (文字数: {len(response_text)})"
-                )
-
-                # トークン使用量をログ（Bedrockの場合のみ）
-                if hasattr(self.model, 'get_usage_stats'):
-                    usage = self.model.get_usage_stats()
-                    self.logger.info(
-                        f"Token usage: input={usage.get('input_tokens', 0)}, "
-                        f"output={usage.get('output_tokens', 0)}"
-                    )
-
-                return response_text
-
-            except Exception as e:
-                self.logger.warning(
-                    f"試行 {attempt + 1}/{max_retries} 失敗: {str(e)}"
-                )
-
-                if attempt < max_retries - 1:
-                    wait_time = retry_delay * (2 ** attempt)
-                    self.logger.info(f"{wait_time}秒待機してリトライします")
-                    time.sleep(wait_time)
-                else:
-                    self.logger.error(
-                        f"最大リトライ回数({max_retries})に達しました"
-                    )
-                    raise
+        return fetch_llm_response(self.model, self.config, self.logger, question)
 
     def _analyze_news(self) -> tuple[str, str]:
-        """
-        ニュース分析を実行
-
-        Returns:
-            LLM (Bedrock) による分析結果と保存した記事一覧のS3キー/ファイルパス
-        """
         from news_scraper import NewsScraper
 
         scraper = NewsScraper(self.config, self.logger)
         articles_by_site = scraper.scrape_all_sites()
-
-        # 記事本文を取得（新規追加）
         articles_by_site = scraper.enrich_articles_with_content(articles_by_site)
-
-        # 記事をフォーマット
         formatted = scraper.format_articles_for_llm(articles_by_site)
-
-        # フォーマットされた記事をファイルに保存
         articles_key = self._save_formatted_articles(formatted)
-
-        # 分析プロンプトを生成
         prompt = self._create_news_analysis_prompt(formatted)
-
-        # LLMで分析
         return self.fetch_response(prompt), articles_key
 
     def _save_formatted_articles(self, formatted_articles: str) -> str:
-        """フォーマットされた記事を保存（S3またはローカルファイル）"""
         return self._get_report_saver().save_formatted_articles(formatted_articles)
 
     def _get_output_prefix(self, analysis_type: str) -> str:
-        """分析種別に対応するS3/ローカル出力プレフィックスを取得する"""
         return self._get_report_saver().get_output_prefix(analysis_type)
 
     def _get_public_html_prefix(self) -> Optional[str]:
-        """公開HTMLコピー用のS3プレフィックスを取得する。無効時はNoneを返す"""
         return self._get_report_saver().get_public_html_prefix()
 
     def _save_public_html_copy(self, html_key: str, html_content: str) -> Optional[str]:
-        """S3上のHTMLを公開用プレフィックス配下へ追加保存する"""
         return self._get_report_saver().save_public_html_copy(html_key, html_content)
 
     def _refresh_public_html_index(self, public_prefix: str) -> None:
-        """公開HTML配下のレポート一覧を public/index.html として保存する"""
         self._get_report_saver().refresh_public_html_index(public_prefix)
 
     def _render_public_html_index(self, public_prefix: str, report_keys: List[str]) -> str:
-        """公開HTML一覧ページを生成する"""
         return self._get_report_saver().render_public_html_index(public_prefix, report_keys)
 
     def _get_now(self) -> datetime:
-        """設定されたタイムゾーンの現在時刻を取得する"""
         return get_now(self.config)
 
     def _get_previous_week_range(self) -> tuple:
-        """直前の日曜から土曜までの記事日付範囲を取得する"""
         return get_previous_week_range(self._get_now())
 
     def _get_previous_month_range(self) -> tuple:
-        """前月の開始日と終了日を取得する"""
         return get_previous_month_range(self._get_now())
 
     def _get_previous_quarter_range(self) -> tuple:
-        """4月始まりの会計年度で直前四半期のラベルと日付範囲を取得する"""
         return get_previous_quarter_range(self._get_now())
 
     def _load_text_if_exists(self, key: str) -> Optional[str]:
-        """存在するS3テキストを読み込む。存在しなければNoneを返す"""
         return self._get_report_loader().load_text_if_exists(key)
 
     def _load_daily_analysis(self, target_date) -> Optional[str]:
-        """記事日付に対応する日次分析をS3から読み込む。移行期間は旧responses/も参照する"""
         return self._get_report_loader().load_daily_analysis(target_date)
 
     def _load_weekly_analyses_for_month(self, month_start, month_end) -> str:
-        """前月内に終了した週次分析をS3から読み込む"""
         return self._get_report_loader().load_weekly_analyses_for_month(month_start, month_end)
 
     def _load_monthly_analyses_for_quarter(self, period_start, period_end) -> str:
-        """四半期に含まれる3か月分の月次分析をS3から読み込む"""
         return self._get_report_loader().load_monthly_analyses_for_quarter(period_start, period_end)
 
     def _create_news_analysis_prompt(self, formatted_articles: str) -> str:
-        """
-        ニュース分析用のプロンプトを生成
-
-        Args:
-            formatted_articles: フォーマットされた記事テキスト
-
-        Returns:
-            分析プロンプト
-        """
-        try:
-            return self.prompt_template.format(formatted_articles=formatted_articles)
-        except KeyError as e:
-            self.logger.error(f"プロンプトテンプレートの変数置換エラー: {e}")
-            self.logger.error("テンプレートに {formatted_articles} プレースホルダーが必要です")
-            raise ValueError(f"プロンプトテンプレートに必要なプレースホルダーがありません: {e}")
+        return create_news_analysis_prompt(self.prompt_template, formatted_articles, self.logger)
 
     def _create_periodic_analysis_prompt(self, **kwargs) -> str:
-        """
-        週次・月次分析用のプロンプトを生成
-
-        Args:
-            kwargs: テンプレートに埋め込む変数
-
-        Returns:
-            分析プロンプト
-        """
-        try:
-            return self.prompt_template.format(**kwargs)
-        except KeyError as e:
-            self.logger.error(f"プロンプトテンプレートの変数置換エラー: {e}")
-            raise ValueError(f"プロンプトテンプレートに必要なプレースホルダーがありません: {e}")
+        return create_periodic_analysis_prompt(self.prompt_template, self.logger, **kwargs)
 
     def save_response(self, response: str, date_str: Optional[str] = None, section: str = "question") -> str:
-        """回答を保存（S3またはローカルファイル）"""
         return self._get_report_saver().save_daily_report(response, date_str, section)
 
     def save_periodic_response(
@@ -426,7 +181,6 @@ class LLMFetcher:
         output_name: str,
         title: str
     ) -> str:
-        """週次・月次・四半期分析結果を保存する"""
         return self._get_report_saver().save_periodic_report(
             response,
             analysis_type,
@@ -435,9 +189,6 @@ class LLMFetcher:
         )
 
     def run_daily(self) -> Dict[str, List[str]]:
-        """
-        日次ニュース分析を実行
-        """
         artifacts = {
             "articles": [],
             "analysis": []
@@ -455,9 +206,6 @@ class LLMFetcher:
         return artifacts
 
     def run_weekly(self) -> Dict[str, List[str]]:
-        """
-        週次ニュース分析を実行
-        """
         if self.s3_handler is None:
             raise ValueError("週次分析にはS3Handlerが必要です")
 
@@ -493,9 +241,6 @@ class LLMFetcher:
         }
 
     def run_monthly(self) -> Dict[str, List[str]]:
-        """
-        月次ニュース分析を実行
-        """
         if self.s3_handler is None:
             raise ValueError("月次分析にはS3Handlerが必要です")
 
@@ -518,9 +263,6 @@ class LLMFetcher:
         }
 
     def run_quarterly(self) -> Dict[str, List[str]]:
-        """
-        四半期ニュース分析を実行
-        """
         if self.s3_handler is None:
             raise ValueError("四半期分析にはS3Handlerが必要です")
 
@@ -546,56 +288,16 @@ class LLMFetcher:
         analysis_type: str,
         artifacts: Dict[str, List[str]]
     ) -> None:
-        """設定に応じてSESメール通知を送信する"""
-        email_config = self.config.get("email_notification", {})
-        if not email_config.get("enabled", False):
-            self.logger.info("メール通知は無効化されています")
-            return
-
-        enabled_types = email_config.get("enabled_analysis_types", [])
-        if analysis_type not in enabled_types:
-            self.logger.info(f"メール通知対象外の分析種別です: {analysis_type}")
-            return
-
-        if self.s3_handler is None:
-            self.logger.warning("S3Handlerがないためメール通知をスキップします")
-            return
-
-        has_artifacts = any(keys for keys in artifacts.values())
-        if not has_artifacts:
-            self.logger.warning("通知対象の生成ファイルがないためメール通知をスキップします")
-            return
-
-        try:
-            from email_notifier import EmailNotifier
-
-            notifier_config = dict(email_config)
-            notifier_config["public_html"] = self.config.get("public_html", {})
-            notifier = EmailNotifier(
-                config=notifier_config,
-                s3_handler=self.s3_handler,
-                logger=self.logger
-            )
-            notifier.send_analysis_notification(
-                analysis_type=analysis_type,
-                artifacts=artifacts,
-                executed_at=self._get_now()
-            )
-        except Exception as e:
-            self.logger.error(f"メール通知に失敗しました: {str(e)}", exc_info=True)
-            if email_config.get("fail_on_send_error", False):
-                raise
+        send_email_notification(
+            config=self.config,
+            s3_handler=self.s3_handler,
+            logger=self.logger,
+            analysis_type=analysis_type,
+            artifacts=artifacts,
+            executed_at=self._get_now(),
+        )
 
     def run(self, analysis_type: str = "daily") -> bool:
-        """
-        メイン処理を実行
-
-        Args:
-            analysis_type: 分析種別（daily, weekly, monthly, quarterly）
-
-        Returns:
-            成功時True、失敗時False
-        """
         try:
             self.logger.info("=" * 80)
             self.logger.info(f"News Analyzer (Bedrock Claude) - 処理を開始します: {analysis_type}")
@@ -624,12 +326,7 @@ class LLMFetcher:
 
 
 def main():
-    """
-    ローカル環境用メイン関数
-    Lambda環境では使用しない（lambda_handler.pyを使用）
-    """
     try:
-        # ローカル環境用の初期化
         fetcher_instance = object.__new__(LLMFetcher)
         fetcher_instance.__init_local__()
         success = fetcher_instance.run()

@@ -68,8 +68,12 @@ zip -r lambda-function.zip \
   lambda_handler.py \
   s3_handler.py \
   cloudwatch_logger.py \
+  email_dispatcher.py \
+  llm_responder.py \
   llm_fetcher.py \
+  local_runtime.py \
   period_calculator.py \
+  prompt_builder.py \
   report_loader.py \
   report_saver.py \
   report_html_renderer.py \

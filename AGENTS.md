@@ -2,7 +2,7 @@
 
 ## プロジェクト構成とモジュール
 
-このリポジトリは、Python 3.11 で動作する AWS Lambda サービスです。日本の技術ニュースを収集し、Amazon Bedrock で分析し、結果を S3 に保存します。主要な実装はリポジトリ直下にあります。`lambda_handler.py` は Lambda のエントリーポイント、`llm_fetcher.py` は全体フロー制御、`news_scraper.py` は RSS と本文取得、`bedrock_client.py` は Bedrock 呼び出し、`s3_handler.py` は S3 操作、`cloudwatch_logger.py` は標準出力向けロガー設定を担当します。`email_notifier.py` は SES v2 による CloudFront URL 通知、`report_html_renderer.py` は Markdown 風レポートの HTML 変換を担当します。設定ファイルとプロンプトは `config/`、デプロイスクリプト、Docker Layer 定義、IAM ポリシー例は `deploy/` に配置されています。
+このリポジトリは、Python 3.11 で動作する AWS Lambda サービスです。日本の技術ニュースを収集し、Amazon Bedrock で分析し、結果を S3 に保存します。主要な実装はリポジトリ直下にあります。`lambda_handler.py` は Lambda のエントリーポイント、`llm_fetcher.py` は分析フロー制御、`news_scraper.py` は RSS と本文取得、`bedrock_client.py` は Bedrock 呼び出し、`s3_handler.py` は S3 操作、`cloudwatch_logger.py` は標準出力向けロガー設定を担当します。`report_saver.py`、`report_loader.py`、`period_calculator.py` は保存・前段レポート読み込み・期間計算を分担し、`prompt_builder.py`、`llm_responder.py`、`email_dispatcher.py`、`local_runtime.py` はプロンプト生成、LLMリトライ、メール通知ディスパッチ、ローカル初期化を担当します。`email_notifier.py` は SES v2 による CloudFront URL 通知、`report_html_renderer.py` は Markdown 風レポートの HTML 変換を担当します。設定ファイルとプロンプトは `config/`、デプロイスクリプト、Docker Layer 定義、IAM ポリシー例は `deploy/` に配置されています。
 
 ## ビルド・テスト・開発コマンド
 

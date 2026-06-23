@@ -51,9 +51,16 @@ graph TD
 ```text
 bedrock-news-analyzer/
 ├── lambda_handler.py       # Lambda エントリーポイント
-├── llm_fetcher.py          # 全体フロー制御
+├── llm_fetcher.py          # 分析フロー制御
 ├── bedrock_client.py       # Amazon Bedrock クライアント
 ├── news_scraper.py         # RSS 取得・本文抽出
+├── report_saver.py         # レポート保存・公開HTML一覧生成
+├── report_loader.py        # 前段レポート読み込み
+├── period_calculator.py    # 週次/月次/四半期の期間計算
+├── prompt_builder.py       # プロンプトテンプレート置換
+├── llm_responder.py        # LLM呼び出しリトライ制御
+├── email_dispatcher.py     # メール通知ディスパッチ
+├── local_runtime.py        # ローカル直接実行の初期化
 ├── report_html_renderer.py # 分析結果HTML変換
 ├── s3_handler.py           # S3 操作
 ├── email_notifier.py       # SES メール通知

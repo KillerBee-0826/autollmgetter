@@ -61,7 +61,7 @@
       "Action": [
         "secretsmanager:GetSecretValue"
       ],
-      "Resource": "arn:aws:secretsmanager:ap-northeast-1:235217802903:secret:claude-news-analyzer/s3-presign-user-*"
+      "Resource": "arn:aws:secretsmanager:ap-northeast-1:ACCOUNT_ID:secret:claude-news-analyzer/s3-presign-user-*"
     }
   ]
 }

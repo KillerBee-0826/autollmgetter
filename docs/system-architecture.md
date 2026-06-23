@@ -196,12 +196,19 @@ Terraform が管理しないもの:
 | Path | 役割 |
 | --- | --- |
 | `lambda_handler.py` | Lambda entrypoint。S3 config/prompt 読込、分析種別検証、`LLMFetcher` 起動。 |
-| `llm_fetcher.py` | 分析フロー制御、期間計算、S3保存、公開HTMLコピー、`index.html` 再生成、メール通知起動。 |
+| `llm_fetcher.py` | 分析種別ごとのフロー制御と既存公開API互換の委譲メソッド。 |
 | `news_scraper.py` | RSS/HTML取得、本文抽出、LLM入力整形。 |
 | `bedrock_client.py` | Bedrock Runtime `invoke_model` 呼び出し。 |
+| `llm_responder.py` | LLM呼び出しのリトライとトークン使用量ログ。 |
+| `prompt_builder.py` | 日次・定期分析プロンプトのテンプレート置換。 |
+| `period_calculator.py` | 週次・月次・4月始まり会計年度の四半期計算。 |
+| `report_loader.py` | 前段レポート読み込み。`.md` 優先、`.txt` と旧 `responses/` fallback を保持。 |
+| `report_saver.py` | `.md`/`.html` 保存、記事一覧保存、公開HTMLコピー、`public/index.html` 再生成。 |
 | `report_html_renderer.py` | Markdown風レポート本文を単体HTMLへ変換。 |
 | `s3_handler.py` | S3 get/put/head/list の薄いラッパー。 |
+| `email_dispatcher.py` | 分析完了通知の有効判定と `EmailNotifier` 起動。 |
 | `email_notifier.py` | SES メール本文生成と送信。CloudFront URLのみを作る。 |
+| `local_runtime.py` | `python llm_fetcher.py` 用の設定・プロンプト・ロガー初期化。 |
 | `infra/terraform/` | AWS リソース定義と S3 config レンダリング。 |
 | `deploy/` | Terraform 移行前の legacy/manual デプロイ補助と Layer build。 |
 | `Makefile` | setup/test/package/Terraform/CloudFront invalidation の入口。 |
