@@ -61,7 +61,7 @@ sequenceDiagram
   EB->>LH: analysis_type付きイベント
   LH->>S3: config/config.json を取得
   LH->>S3: analysis_type対応プロンプトを取得
-  LH->>LF: config / prompt_template / S3Handler
+  LH->>LF: LLMFetcher(config, prompt_template, s3_handler, logger)
 
   alt daily
     LF->>NS: RSSと記事本文を取得
@@ -205,6 +205,8 @@ Terraform が管理しないもの:
 | `infra/terraform/` | AWS リソース定義と S3 config レンダリング。 |
 | `deploy/` | Terraform 移行前の legacy/manual デプロイ補助と Layer build。 |
 | `Makefile` | setup/test/package/Terraform/CloudFront invalidation の入口。 |
+
+`LLMFetcher` の Lambda 用初期化シグネチャは `LLMFetcher(config, prompt_template, s3_handler, logger)` です。`config` と `prompt_template` は `lambda_handler.py` が S3 から読み込み済みの値を渡し、ローカル直接実行時だけ `llm_fetcher.py` の `__init_local__()` がリポジトリ内の `config/config.json` とプロンプトファイルを読み込みます。
 
 ## 現在の制約と前提
 

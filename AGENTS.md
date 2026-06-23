@@ -2,16 +2,30 @@
 
 ## プロジェクト構成とモジュール
 
-このリポジトリは、Python 3.11 で動作する AWS Lambda サービスです。日本の技術ニュースを収集し、Amazon Bedrock で分析し、結果を S3 に保存します。主要な実装はリポジトリ直下にあります。`lambda_handler.py` は Lambda のエントリーポイント、`llm_fetcher.py` は全体フロー制御、`news_scraper.py` は RSS と本文取得、`bedrock_client.py` は Bedrock 呼び出し、`s3_handler.py` と `cloudwatch_logger.py` は AWS 操作とログ出力を担当します。設定ファイルとプロンプトは `config/`、デプロイスクリプト、Docker Layer 定義、IAM ポリシー例は `deploy/` に配置されています。
+このリポジトリは、Python 3.11 で動作する AWS Lambda サービスです。日本の技術ニュースを収集し、Amazon Bedrock で分析し、結果を S3 に保存します。主要な実装はリポジトリ直下にあります。`lambda_handler.py` は Lambda のエントリーポイント、`llm_fetcher.py` は全体フロー制御、`news_scraper.py` は RSS と本文取得、`bedrock_client.py` は Bedrock 呼び出し、`s3_handler.py` は S3 操作、`cloudwatch_logger.py` は標準出力向けロガー設定を担当します。`email_notifier.py` は SES v2 による CloudFront URL 通知、`report_html_renderer.py` は Markdown 風レポートの HTML 変換を担当します。設定ファイルとプロンプトは `config/`、デプロイスクリプト、Docker Layer 定義、IAM ポリシー例は `deploy/` に配置されています。
 
 ## ビルド・テスト・開発コマンド
 
 ローカル環境を作成し、開発用依存関係をインストールします。
 
 ```bash
-python3.11 -m venv .venv
+make setup
 source .venv/bin/activate
-pip install -r requirements.txt
+```
+
+ユニットテストを実行します。
+
+```bash
+make test
+# または
+python -m unittest discover -v
+```
+
+Lambda 関数 zip と Lambda Layer zip を作成します。
+
+```bash
+make package-function
+make package-layer
 ```
 
 モック EventBridge イベントで Lambda 処理をローカル実行します。
@@ -21,7 +35,7 @@ export S3_BUCKET_NAME="your-s3-bucket-name"
 python lambda_handler.py
 ```
 
-Docker を使って Lambda Layer を作成します。
+Docker を直接使って Lambda Layer を作成する場合は、次のスクリプトを使います。
 
 ```bash
 ./deploy/build_layer.sh
@@ -42,7 +56,7 @@ Python 標準スタイルに従い、インデントは 4 スペースにしま�
 
 ## テスト方針
 
-現時点では専用の自動テストスイートはありません。変更前後で、AWS 認証情報と `S3_BUCKET_NAME` を設定したうえで `python lambda_handler.py` を実行し、S3、Bedrock、スクレイピング処理の結果をコンソールまたは CloudWatch Logs で確認してください。記事の抽出・フィルタ処理を変更する場合は、将来的にテストを追加しやすいよう、ライブ通信ではなく小さな fixture ベースの検証を優先します。
+`test_*.py` に `unittest` ベースの自動テストがあります。変更前後で `python -m unittest discover -v` または `make test` を実行してください。AWS 認証情報と `S3_BUCKET_NAME` を設定したうえで `python lambda_handler.py` を実行すると、S3、Bedrock、スクレイピング処理を含むローカルスモークテストができます。記事の抽出・フィルタ処理を変更する場合は、ライブ通信ではなく小さな fixture ベースの検証を優先します。
 
 ## コミットと Pull Request
 
