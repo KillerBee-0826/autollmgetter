@@ -37,6 +37,53 @@ import lambda_handler
 
 
 class LambdaHandlerErrorResponseTests(unittest.TestCase):
+    def _invoke_success(self, event, expected_analysis_type, prompt_key):
+        logger = Mock()
+        s3_handler = Mock()
+        s3_handler.load_json.return_value = {
+            "llm_provider": "bedrock",
+            "bedrock_model": "model",
+            "prompt_paths": {
+                expected_analysis_type: prompt_key,
+            },
+        }
+        s3_handler.load_text.return_value = "prompt"
+        fetcher = Mock()
+        fetcher.run.return_value = True
+
+        with patch.dict(lambda_handler.os.environ, {"S3_BUCKET_NAME": "bucket"}, clear=True):
+            with patch.object(lambda_handler, "setup_cloudwatch_logger", return_value=logger):
+                with patch.object(lambda_handler, "S3Handler", return_value=s3_handler):
+                    with patch.object(lambda_handler, "LLMFetcher", return_value=fetcher):
+                        response = lambda_handler.lambda_handler(event, Mock())
+
+        self.assertEqual(response["statusCode"], 200)
+        body = json.loads(response["body"])
+        self.assertEqual(body["success"], True)
+        s3_handler.load_text.assert_called_once_with(prompt_key)
+        fetcher.run.assert_called_once_with(analysis_type=expected_analysis_type)
+
+    def test_daily_analysis_type_is_allowed(self):
+        self._invoke_success(
+            {"analysis_type": "daily"},
+            "daily",
+            "config/news_analysis_prompt.txt",
+        )
+
+    def test_weekly_analysis_type_is_allowed_from_detail(self):
+        self._invoke_success(
+            {"detail": {"analysis_type": "weekly"}},
+            "weekly",
+            "config/weekly_news_analysis_prompt.txt",
+        )
+
+    def test_monthly_analysis_type_is_allowed(self):
+        self._invoke_success(
+            {"analysis_type": "monthly"},
+            "monthly",
+            "config/monthly_news_analysis_prompt.txt",
+        )
+
     def test_quarterly_analysis_type_is_allowed(self):
         logger = Mock()
         s3_handler = Mock()
