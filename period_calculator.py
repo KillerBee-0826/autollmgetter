@@ -5,7 +5,17 @@
 
 from datetime import datetime, timedelta
 
-import pytz
+try:
+    import pytz
+except ImportError:
+    from zoneinfo import ZoneInfo
+
+    class _PytzCompat:
+        @staticmethod
+        def timezone(timezone_name: str):
+            return ZoneInfo(timezone_name)
+
+    pytz = _PytzCompat()
 
 
 def get_now(config: dict) -> datetime:
