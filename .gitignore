@@ -39,3 +39,6 @@ output*.json
 
 # User-generated data
 responses/
+
+# refactor instructions
+refactor-instructions.md
